@@ -67,6 +67,15 @@ class GitHubAdapter:
             return text
         return text[:max_chars] + f"\n... [truncated, full diff is {len(text)} chars]"
 
+    def get_file_content(self, path: str, ref: str = "main") -> str:
+        r = self._client.get(
+            f"/repos/{self._owner_repo}/contents/{path}",
+            params={"ref": ref},
+            headers={"Accept": "application/vnd.github.raw"},
+        )
+        r.raise_for_status()
+        return r.text
+
     def get_file_commits(self, path: str, limit: int = 10) -> list[Commit]:
         r = self._client.get(
             f"/repos/{self._owner_repo}/commits",

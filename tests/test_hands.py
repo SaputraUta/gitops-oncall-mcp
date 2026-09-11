@@ -14,6 +14,12 @@ from gitops_oncall_mcp.audit import AuditLog
 from gitops_oncall_mcp.tools import hands
 from gitops_oncall_mcp.vcs.base import PipelineResult, PRResult
 
+VALUES = """services:
+  maps:
+    tag: v1.2.9-stag
+    replicaCount: 2
+"""
+
 
 class _StubVCS:
     def __init__(self):
@@ -27,6 +33,10 @@ class _StubVCS:
     # Senses unused here, stubbed:
     def list_tags(self, limit=50):
         return []
+
+    def get_file_content(self, path, ref="main"):
+        self.calls.append(("get_file_content", {"path": path, "ref": ref}))
+        return VALUES
 
     def get_commit_diff(self, sha, max_chars=50_000):
         return ""
@@ -45,6 +55,15 @@ class _StubVCS:
         if self.fail:
             raise RuntimeError("pr explosion")
         return self.next_pr
+
+
+_WRITES = {"open_pr", "trigger_deploy"}
+
+
+def _writes(vcs) -> list[str]:
+    """Calls that change something. Reading a file to build a proposal is not
+    a side effect, so propose_* is allowed to do it."""
+    return [name for name, _ in vcs.calls if name in _WRITES]
 
 
 def _make_ctx(cfg, audit_path=None):
@@ -84,10 +103,12 @@ def _get_tools(mcp: FastMCP):
 def test_propose_rollback_returns_id_no_side_effect(cfg):
     _, ctx, vcs = _make_ctx(cfg)
     tools = _get_tools(_)
-    result = tools["propose_rollback"](env="staging", target_tag="v1.2.3-stag")
+    result = tools["propose_rollback"](env="staging", service="maps", target_tag="v1.2.3-stag")
     assert result["proposal_id"]
     assert result["tool"] == "rollback_deploy"
-    assert vcs.calls == []  # nothing executed yet
+    assert _writes(vcs) == [], "propose must not change anything"
+    assert [n for n, _ in vcs.calls] == ["get_file_content"], "it only reads the current tag"
+    assert result["from_tag"] == "v1.2.9-stag", "the human sees both ends of the move"
     # proposal exists in store
     assert ctx.proposals.peek(result["proposal_id"]) is not None
 
@@ -95,12 +116,16 @@ def test_propose_rollback_returns_id_no_side_effect(cfg):
 def test_confirm_rollback_executes_and_removes_proposal(cfg):
     _, ctx, vcs = _make_ctx(cfg)
     tools = _get_tools(_)
-    p = tools["propose_rollback"](env="staging", target_tag="v1.2.3-stag")
+    p = tools["propose_rollback"](env="staging", service="maps", target_tag="v1.2.3-stag")
     out = tools["confirm_rollback"](proposal_id=p["proposal_id"])
-    assert out["pipeline_id"] == "pip-1"
-    assert out["state"] == "PENDING"
-    # VCS was called exactly once
-    assert vcs.calls == [("trigger_deploy", {"env": "staging", "ref": "v1.2.3-stag"})]
+    assert out["pr_url"] == "https://example/pr/1"
+    kinds = [c[0] for c in vcs.calls]
+    assert kinds == ["get_file_content", "open_pr"], "a rollback is a pull request, not a dispatch"
+    pr = dict(vcs.calls[1][1])
+    assert "tag: v1.2.3-stag" in pr["new_content"], "the target tag must reach the PR"
+    assert "v1.2.9-stag" not in pr["new_content"], "the old tag must be gone"
+    assert out["from_tag"] == "v1.2.9-stag"
+    assert out["to_tag"] == "v1.2.3-stag"
     # proposal consumed
     assert ctx.proposals.peek(p["proposal_id"]) is None
 
@@ -130,7 +155,7 @@ def test_propose_rollback_rejects_bad_tag(cfg):
     _, _ctx, vcs = _make_ctx(cfg)
     tools = _get_tools(_)
     with pytest.raises(ValueError, match="doesn't match"):
-        tools["propose_rollback"](env="prod", target_tag="v1.2.3-stag")
+        tools["propose_rollback"](env="prod", service="maps", target_tag="v1.2.3-stag")
     assert vcs.calls == []
 
 
@@ -139,17 +164,17 @@ def test_confirm_with_unknown_id_raises_and_no_side_effect(cfg):
     tools = _get_tools(_)
     with pytest.raises(KeyError):
         tools["confirm_rollback"](proposal_id="not-real")
-    assert vcs.calls == []
+    assert _writes(vcs) == []
 
 
 def test_confirm_is_one_shot(cfg):
     _, _ctx, vcs = _make_ctx(cfg)
     tools = _get_tools(_)
-    p = tools["propose_rollback"](env="staging", target_tag="v1.2.3-stag")
+    p = tools["propose_rollback"](env="staging", service="maps", target_tag="v1.2.3-stag")
     tools["confirm_rollback"](proposal_id=p["proposal_id"])
     with pytest.raises(KeyError):
         tools["confirm_rollback"](proposal_id=p["proposal_id"])
-    assert len(vcs.calls) == 1
+    assert _writes(vcs) == ["open_pr"], "the second confirm must not open another PR"
 
 
 def test_confirm_pr_id_cannot_execute_rollback(cfg):
@@ -175,11 +200,11 @@ def test_proposal_expires(cfg):
     short_cfg = replace(cfg, guardrails=replace(cfg.guardrails, proposal_ttl_seconds=1))
     _, _ctx, vcs = _make_ctx(short_cfg)
     tools = _get_tools(_)
-    p = tools["propose_rollback"](env="staging", target_tag="v1.2.3-stag")
+    p = tools["propose_rollback"](env="staging", service="maps", target_tag="v1.2.3-stag")
     time.sleep(1.1)
     with pytest.raises(KeyError):
         tools["confirm_rollback"](proposal_id=p["proposal_id"])
-    assert vcs.calls == []
+    assert _writes(vcs) == [], "an expired proposal must not reach the VCS"
 
 
 # ─────────────────────────────────────────────────────────
@@ -191,7 +216,7 @@ def test_audit_log_records_propose_and_confirm(cfg, tmp_path):
     log_file = tmp_path / "audit.jsonl"
     _, _ctx, vcs = _make_ctx(cfg, audit_path=str(log_file))
     tools = _get_tools(_)
-    p = tools["propose_rollback"](env="staging", target_tag="v1.2.3-stag")
+    p = tools["propose_rollback"](env="staging", service="maps", target_tag="v1.2.3-stag")
     tools["confirm_rollback"](proposal_id=p["proposal_id"])
 
     events = [json.loads(line) for line in log_file.read_text().strip().splitlines()]
@@ -206,7 +231,7 @@ def test_audit_log_records_action_failure(cfg, tmp_path):
     _, _ctx, vcs = _make_ctx(cfg, audit_path=str(log_file))
     vcs.fail = True
     tools = _get_tools(_)
-    p = tools["propose_rollback"](env="staging", target_tag="v1.2.3-stag")
+    p = tools["propose_rollback"](env="staging", service="maps", target_tag="v1.2.3-stag")
     with pytest.raises(RuntimeError, match="explosion"):
         tools["confirm_rollback"](proposal_id=p["proposal_id"])
     events = [json.loads(line) for line in log_file.read_text().strip().splitlines()]

@@ -51,6 +51,10 @@ class VCSAdapter(Protocol):
         """Unified diff of a single commit, truncated."""
         ...
 
+    def get_file_content(self, path: str, ref: str = "main") -> str:
+        """Raw text of one file at a branch, tag or commit."""
+        ...
+
     def get_file_commits(self, path: str, limit: int = 10) -> list[Commit]:
         """Recent commits that touched a specific file path."""
         ...

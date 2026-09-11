@@ -62,7 +62,7 @@ Writes, split in two so a single confused turn cannot act:
 
 | Propose | Confirm | Effect |
 |---|---|---|
-| `propose_rollback` | `confirm_rollback` | dispatch the deploy workflow at an older tag |
+| `propose_rollback` | `confirm_rollback` | open a pull request pinning one service to an older tag |
 | `propose_pr_change` | `confirm_pr_change` | open a pull request against the config repository |
 
 `propose_*` has no side effect and returns a proposal id with a TTL. `confirm_*` refuses without a live id. Both ends are written to the audit log.
@@ -73,9 +73,12 @@ Planned, not built yet:
 |---|---|
 | Tempo | traces and span timings |
 
-`propose_rollback` still dispatches a deploy workflow, inherited from the fork.
-In this platform a rollback is a commit to the config repository, so that pair
-is due to be rebuilt on the pull-request path.
+A rollback is a one-line change to the environment's values file, not a
+pipeline trigger: `propose_rollback` reads the tag pinned right now and returns
+both ends of the move, so the human approving it sees `v1.0.11 -> v1.0.9`
+before anything happens. The file is edited line-by-line rather than through a
+YAML round-trip, which would reformat the whole file and bury a one-line change
+in an unreadable diff.
 
 ## Configuration
 
@@ -96,6 +99,7 @@ The observability endpoints are addressed directly rather than through a Grafana
 | `GITHUB_TOKEN` | yes | fine-grained PAT, scoped to the repositories below and nothing else |
 | `GITHUB_OWNER`, `GITHUB_REPO` | yes | the config repository, where pull requests are opened |
 | `GITHUB_APP_REPOS` | no | application repositories, which is where release tags live |
+| `GITHUB_VALUES_PATH` | no | values file per environment, `{env}` substituted; default `envs/{env}/values.yaml` |
 | `MCP_BEARER_TOKEN` | when not loopback | shared secret required on every request |
 
 The namespace is configuration rather than a tool argument on purpose: the model
