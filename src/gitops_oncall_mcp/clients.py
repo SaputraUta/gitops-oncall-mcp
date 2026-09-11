@@ -43,8 +43,13 @@ def alertmanager_client(obs: ObservabilityConfig, timeout: float = 15.0) -> http
     return httpx.Client(base_url=obs.alertmanager_url, **_kwargs(obs, timeout))
 
 def k8s_clients() -> tuple[client.CoreV1Api, client.CustomObjectsApi]:
+    """Authenticate in-cluster if possible, else fall back to the local kubeconfig.
+
+    A bare except here would swallow a broken kubeconfig too, so the fallback is
+    narrowed to the one error that means "not running in a pod".
+    """
     try:
         config.load_incluster_config()
-    except:
+    except config.ConfigException:
         config.load_kube_config()
     return client.CoreV1Api(), client.CustomObjectsApi()

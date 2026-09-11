@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from kubernetes import client as k8s
@@ -22,7 +22,7 @@ class K8sCtx:
 def _age(ts: datetime | None) -> str:
     if ts is None:
         return "?"
-    secs = int((datetime.now(timezone.utc) - ts).total_seconds())
+    secs = int((datetime.now(UTC) - ts).total_seconds())
     if secs < 3600:
         return f"{secs // 60}m"
     if secs < 86400:
@@ -82,7 +82,7 @@ def register(mcp: FastMCP, ctx: K8sCtx) -> None:
         Returns [{"time", "type", "reason", "object", "message", "count"}, ...].
         Call this after get_pods to find out WHY a pod is unhealthy.
         """
-        cutoff = datetime.now(timezone.utc) - timedelta(minutes=within_minutes)
+        cutoff = datetime.now(UTC) - timedelta(minutes=within_minutes)
         events = ctx.core.list_namespaced_event(ns).items
         if warnings_only:
             events = [e for e in events if e.type == "Warning"]

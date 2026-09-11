@@ -11,6 +11,7 @@ from gitops_oncall_mcp.config import (
     DeployTagConfig,
     GitHubConfig,
     GuardrailsConfig,
+    K8sConfig,
     LabelConfig,
     ObservabilityConfig,
     ServerConfig,
@@ -30,6 +31,7 @@ def cfg() -> Config:
             ca_cert_path=None,
         ),
         labels=LabelConfig(env_key="env", team_key="team", team_value="testteam"),
+        k8s=K8sConfig(namespace="test-ns"),
         deploy_tags=DeployTagConfig(
             prod_regex=re.compile(r"^v\d+\.\d+\.\d+$"),
             nonprod_suffixes={"dev": "-dev", "staging": "-stag"},

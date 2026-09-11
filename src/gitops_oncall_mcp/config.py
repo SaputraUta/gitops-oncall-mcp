@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 def _required(key: str) -> str:
@@ -53,18 +53,24 @@ class LabelConfig:
     env_key: str
     team_key: str
     team_value: str  # empty → don't filter by team
+    env_values: dict[str, str] = field(default_factory=dict)  # logical env → label value
 
     @classmethod
     def from_env(cls) -> LabelConfig:
+        raw = _optional("ENV_VALUE_MAP")
         return cls(
             env_key=_optional("ENV_LABEL_KEY", "env"),
             team_key=_optional("TEAM_LABEL_KEY", "team"),
             team_value=_optional("TEAM_LABEL_VALUE"),
+            env_values=dict(
+                (k.strip(), v.strip())
+                for k, _, v in (pair.partition(":") for pair in raw.split(",") if ":" in pair)
+            ),
         )
 
     def selector(self, env: str, extra: str = "") -> str:
         """Return a PromQL/LogQL selector body: env="...",team="..." plus extras."""
-        parts = [f'{self.env_key}="{env}"']
+        parts = [f'{self.env_key}="{self.env_values.get(env, env)}"']
         if self.team_value:
             parts.append(f'{self.team_key}="{self.team_value}"')
         if extra:

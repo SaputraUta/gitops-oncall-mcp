@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
-import asyncio
 import httpx
 import respx
 from fastmcp import FastMCP
@@ -84,16 +84,16 @@ def test_get_cpu_usage(cfg):
 
 
 @respx.mock
-def test_get_error_rate_no_traffic_returns_zero(cfg):
-    """When PromQL returns NaN (no traffic), we guard to 0.0 instead of raising."""
+def test_get_error_rate_no_traffic_returns_none(cfg):
+    """NaN means no traffic in the window, which is None — not a measured zero."""
     respx.get("http://prometheus.test/api/v1/query").respond(
         json={"data": {"result": [{"metric": {}, "value": [0, "NaN"]}]}}
     )
     prometheus, loki, alerts = _make_clients()
     ctx = senses.SensesCtx(prometheus=prometheus, loki=loki, alerts=alerts, cfg=cfg, vcs=_StubVCS())
     r = ctx.prometheus.get("/api/v1/query", params={"query": "test"})
-    val = senses._scalar_or_zero(r.json().get("data", {}).get("result", []), precision=3)
-    assert val == 0.0
+    val = senses._scalar_or_none(r.json().get("data", {}).get("result", []), precision=3)
+    assert val is None
 
 
 @respx.mock
@@ -104,7 +104,7 @@ def test_get_error_rate_with_traffic(cfg):
     prometheus, loki, alerts = _make_clients()
     ctx = senses.SensesCtx(prometheus=prometheus, loki=loki, alerts=alerts, cfg=cfg, vcs=_StubVCS())
     r = ctx.prometheus.get("/api/v1/query", params={"query": "test"})
-    val = senses._scalar_or_zero(r.json().get("data", {}).get("result", []), precision=3)
+    val = senses._scalar_or_none(r.json().get("data", {}).get("result", []), precision=3)
     assert val == 12.456
 
 

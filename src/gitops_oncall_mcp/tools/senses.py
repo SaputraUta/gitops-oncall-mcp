@@ -31,12 +31,17 @@ def _promql(ctx: SensesCtx, q: str) -> list[dict]:
     return r.json().get("data", {}).get("result", [])
 
 
-def _scalar_or_zero(result: list[dict], precision: int) -> float:
+def _scalar_or_none(result: list[dict], precision: int) -> float | None:
+    """Round the first sample, or None when the window held no data.
+
+    None and 0.0 are different answers: 0.0 means measured and zero, None means
+    nothing was scraped in the window. Collapsing them hides an outage as health.
+    """
     if not result:
-        return 0.0
+        return None
     val = float(result[0]["value"][1])
     if math.isnan(val) or math.isinf(val):
-        return 0.0
+        return None
     return round(val, precision)
 
 
@@ -98,37 +103,47 @@ def register(mcp: FastMCP, ctx: SensesCtx) -> None:
             for s in _promql(ctx, q)
         ]
 
-    def get_error_rate(env: str) -> float:
-        """Current 5xx error rate (percent of all requests) for the env over the last 5 minutes.
+    def get_error_rate(env: str, minutes: int = 30) -> float | None:
+        """5xx error rate as a percent of all requests for the env.
 
         Args:
             env: Environment name.
+            minutes: Lookback window. Widen it on a low-traffic service, where a
+                short window holds no requests at all.
 
-        Returns a single float (0..100). Returns 0.0 when there is no traffic.
+        Returns a float (0..100), or None when no requests were seen in the
+        window. None is not health — it means there is nothing to judge, so say
+        so rather than reporting zero errors.
         Call this when asked about errors, error spike, 5xx, or service health.
         """
         sel_all = labels.selector(env)
         sel_5xx = labels.selector(env, 'status=~"5.."')
-        errors = f"sum(rate(http_requests_total{{{sel_5xx}}}[5m]))"
-        total = f"sum(rate(http_requests_total{{{sel_all}}}[5m]))"
+        # `or vector(0)` keeps a genuine zero from collapsing into an empty
+        # vector: with no 5xx series at all, the division would yield no result
+        # and read as "no data" rather than "no errors".
+        errors = f"(sum(rate(http_requests_total{{{sel_5xx}}}[{minutes}m])) or vector(0))"
+        total = f"sum(rate(http_requests_total{{{sel_all}}}[{minutes}m]))"
         q = f"100 * ({errors}) / ({total})"
-        return _scalar_or_zero(_promql(ctx, q), precision=3)
+        return _scalar_or_none(_promql(ctx, q), precision=3)
 
-    def get_latency_p95(env: str) -> float:
-        """Current 95th-percentile HTTP request latency (seconds) for the env.
+    def get_latency_p95(env: str, minutes: int = 30) -> float | None:
+        """95th-percentile HTTP request latency in seconds for the env.
 
         Args:
             env: Environment name.
+            minutes: Lookback window. Widen it on a low-traffic service, where a
+                short window holds no requests at all.
 
-        Returns p95 latency in seconds, over the last 5 minutes. 0.0 when no traffic.
+        Returns p95 in seconds, or None when no requests were seen in the window.
+        None is not a fast service — it means there is nothing to measure.
         Call this when asked about latency, slow requests, or response time.
         """
         sel = labels.selector(env)
         q = (
             f"histogram_quantile(0.95, sum by (le) "
-            f"(rate(http_request_duration_seconds_bucket{{{sel}}}[5m])))"
+            f"(rate(http_request_duration_seconds_bucket{{{sel}}}[{minutes}m])))"
         )
-        return _scalar_or_zero(_promql(ctx, q), precision=4)
+        return _scalar_or_none(_promql(ctx, q), precision=4)
 
     def get_active_alerts() -> list[dict]:
         """List alerts currently firing in Alertmanager.

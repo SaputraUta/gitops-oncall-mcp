@@ -75,8 +75,10 @@ def test_config_from_env(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
     monkeypatch.setenv("GITHUB_OWNER", "octocat")
     monkeypatch.setenv("GITHUB_REPO", "repo")
+    monkeypatch.setenv("K8S_NAMESPACE", "procal")
 
     cfg = Config.from_env()
+    assert cfg.k8s.namespace == "procal"
     assert cfg.observability.prometheus_url == "http://prometheus.monitoring.svc:9090"
     assert cfg.observability.alertmanager_url is None
     assert cfg.observability.bearer_token is None
