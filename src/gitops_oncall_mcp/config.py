@@ -91,6 +91,7 @@ class DeployTagConfig:
 
     prod_regex: re.Pattern[str]
     nonprod_suffixes: dict[str, str]  # env name → tag suffix
+    prod_envs: frozenset[str] = frozenset({"prod", "production"})
 
     @classmethod
     def from_env(cls) -> DeployTagConfig:
@@ -103,7 +104,13 @@ class DeployTagConfig:
         )
 
     def matches(self, env: str, tag: str) -> bool:
-        if env == "prod":
+        """Whether `tag` is a release of `env`.
+
+        Both "prod" and "production" name the production environment: the
+        metric tools say "production", so accepting only "prod" here would
+        return an empty deploy list rather than an error.
+        """
+        if env in self.prod_envs:
             return bool(self.prod_regex.match(tag))
         suffix = self.nonprod_suffixes.get(env)
         return bool(suffix) and tag.endswith(suffix)
@@ -113,9 +120,10 @@ class DeployTagConfig:
 class GitHubConfig:
     token: str
     owner: str
-    repo: str
+    repo: str  # the config repo Argo CD reads, and where pull requests are opened
     deploy_workflow: str
     api_base: str
+    app_repos: tuple[str, ...] = ()  # repos that carry release tags
 
 
 @dataclass(frozen=True)
@@ -134,6 +142,9 @@ class VCSConfig:
                 repo=_required("GITHUB_REPO"),
                 deploy_workflow=_optional("GITHUB_DEPLOY_WORKFLOW", "deploy.yml"),
                 api_base=_optional("GITHUB_API_BASE", "https://api.github.com").rstrip("/"),
+                app_repos=tuple(
+                    r.strip() for r in _optional("GITHUB_APP_REPOS").split(",") if r.strip()
+                ),
             )
         )
 

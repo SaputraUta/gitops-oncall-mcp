@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 from fastmcp import FastMCP
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -19,7 +21,21 @@ from .vcs.github import GitHubAdapter
 
 
 def _build_vcs(cfg: Config) -> VCSAdapter:
+    """Adapter for the config repo — the one Argo CD reads and PRs land in."""
     return GitHubAdapter(cfg.vcs.github)
+
+
+def _build_app_vcs(cfg: Config) -> dict[str, VCSAdapter]:
+    """One adapter per application repo, keyed by repo name.
+
+    Release tags live on the application repos, not on the config repo, so
+    "what shipped" cannot be answered from a single adapter. The adapter code
+    is per-repo already, so this is a mapping rather than a rewrite.
+    """
+    return {
+        name: GitHubAdapter(dataclasses.replace(cfg.vcs.github, repo=name))
+        for name in cfg.vcs.github.app_repos
+    }
 
 
 class BearerTokenAuth(BaseHTTPMiddleware):
@@ -42,12 +58,15 @@ def build_server() -> FastMCP:
     alerts = alertmanager_client(cfg.observability)
     core, custom = k8s_clients()
     vcs = _build_vcs(cfg)
+    app_vcs = _build_app_vcs(cfg)
     proposals = ProposalStore(default_ttl_seconds=cfg.guardrails.proposal_ttl_seconds)
     audit = AuditLog(file_path=cfg.guardrails.audit_log_path)
 
     senses_tools.register(
         mcp,
-        senses_tools.SensesCtx(prometheus=prometheus, loki=loki, alerts=alerts, cfg=cfg, vcs=vcs),
+        senses_tools.SensesCtx(
+            prometheus=prometheus, loki=loki, alerts=alerts, cfg=cfg, vcs=vcs, app_vcs=app_vcs
+        ),
     )
     k8s_tools.register(mcp, k8s_tools.K8sCtx(core=core, custom=custom, cfg=cfg))
     hands_tools.register(

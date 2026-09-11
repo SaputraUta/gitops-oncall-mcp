@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import httpx
@@ -22,7 +22,18 @@ class SensesCtx:
     loki: httpx.Client
     alerts: httpx.Client | None
     cfg: Config
-    vcs: VCSAdapter
+    vcs: VCSAdapter  # the config repo
+    app_vcs: dict[str, VCSAdapter] = field(default_factory=dict)  # repo name → adapter
+
+
+def _repo(ctx: SensesCtx, repo: str | None) -> VCSAdapter:
+    """Adapter for `repo`, or the config repo when no name is given."""
+    if repo is None:
+        return ctx.vcs
+    if repo not in ctx.app_vcs:
+        known = ", ".join(sorted(ctx.app_vcs)) or "none configured"
+        raise RuntimeError(f"unknown repo {repo!r}; known application repos: {known}")
+    return ctx.app_vcs[repo]
 
 
 def _promql(ctx: SensesCtx, q: str) -> list[dict]:
@@ -233,52 +244,62 @@ def register(mcp: FastMCP, ctx: SensesCtx) -> None:
                 out.append({"time": tsval[0], "pod": pod, "line": tsval[1]})
         return out[:limit]
 
-    def get_recent_deploys(env: str, limit: int = 5) -> list[dict]:
-        """Recent deployment tags for the given environment.
+    def get_recent_deploys(env: str, limit: int = 5, repo: str | None = None) -> list[dict]:
+        """Releases of the given environment, newest first, across every app repo.
 
         Args:
             env: Environment name.
-            limit: Number of recent tags to return (default 5).
+            limit: Number of releases to return per repo.
+            repo: Restrict to one application repo. Omit to search them all.
 
-        Returns [{"tag", "sha", "date", "message"}, ...] — most recent first.
-        Call when asked what shipped recently, or to correlate an issue with a deploy.
+        Returns [{"repo", "tag", "sha", "date", "message"}, ...].
+        Tags live on the application repos, never on the config repo, so an
+        empty list here means nothing was released — not that nothing is
+        deployed. Call when asked what shipped, or to line an incident up
+        against a deploy.
         """
-        tags = ctx.vcs.list_tags(limit=50)
         rules = ctx.cfg.deploy_tags
-        out = []
-        for t in tags:
-            if not rules.matches(env, t.tag):
-                continue
-            out.append(
-                {"tag": t.tag, "sha": t.sha, "date": t.date, "message": t.message}
-            )
-            if len(out) >= limit:
-                break
-        return out
+        names = [repo] if repo else sorted(ctx.app_vcs)
+        out: list[dict] = []
+        for name in names:
+            kept = 0
+            for t in _repo(ctx, name).list_tags(limit=50):
+                if not rules.matches(env, t.tag):
+                    continue
+                out.append(
+                    {"repo": name, "tag": t.tag, "sha": t.sha, "date": t.date, "message": t.message}
+                )
+                kept += 1
+                if kept >= limit:
+                    break
+        return sorted(out, key=lambda r: r["date"], reverse=True)
 
-    def get_commit_diff(sha: str, max_chars: int = 50_000) -> str:
+    def get_commit_diff(sha: str, repo: str | None = None, max_chars: int = 50_000) -> str:
         """Unified diff of a single commit.
 
         Args:
             sha: Commit SHA (full or short).
+            repo: Application repo the SHA belongs to, as reported by
+                get_recent_deploys. Omit only for the config repo.
             max_chars: Truncate diff to this many characters (default 50000).
 
         Call when investigating what changed in a recent deploy.
         """
-        return ctx.vcs.get_commit_diff(sha, max_chars=max_chars)
+        return _repo(ctx, repo).get_commit_diff(sha, max_chars=max_chars)
 
-    def get_file_commits(path: str, limit: int = 10) -> list[dict]:
+    def get_file_commits(path: str, limit: int = 10, repo: str | None = None) -> list[dict]:
         """Recent commits that touched a specific file.
 
         Args:
             path: File path in the repo, e.g. 'internal/handlers/form.go'.
             limit: Number of commits to return (default 10).
+            repo: Application repo to look in. Omit for the config repo.
 
         Returns [{"sha", "date", "message"}, ...].
         Call when a log/stack trace points to a specific file and you need the
         commit that introduced the bug. Use BEFORE get_commit_diff.
         """
-        commits = ctx.vcs.get_file_commits(path, limit=limit)
+        commits = _repo(ctx, repo).get_file_commits(path, limit=limit)
         return [{"sha": c.sha, "date": c.date, "message": c.message} for c in commits]
 
     # Register every tool

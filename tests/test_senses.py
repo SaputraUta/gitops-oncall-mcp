@@ -162,3 +162,37 @@ def test_search_logs_escapes_quotes(cfg):
 
     q = route.calls.last.request.url.params["query"]
     assert q == '{env="prod",team="testteam"} |= "say \\"hi\\""'
+
+def test_get_recent_deploys_merges_repos_by_date(cfg):
+    """Tags live per repo; the tool must merge them into one timeline."""
+
+    class _Repo:
+        def __init__(self, tags):
+            self._tags = tags
+
+        def list_tags(self, limit=50):
+            from gitops_oncall_mcp.vcs.base import TagInfo
+
+            return [TagInfo(tag=t, sha="s", date=d, message="m") for t, d in self._tags]
+
+    prometheus, loki, alerts = _make_clients()
+    mcp = FastMCP("test")
+    ctx = senses.SensesCtx(
+        prometheus=prometheus,
+        loki=loki,
+        alerts=alerts,
+        cfg=cfg,
+        vcs=_StubVCS(),
+        app_vcs={
+            "dora": _Repo([("v1.0.4", "2026-09-07T00:00:00Z"), ("v0.9.0-dev", "2026-09-01T00:00:00Z")]),
+            "maps": _Repo([("v1.0.11", "2026-09-08T00:00:00Z")]),
+        },
+    )
+    senses.register(mcp, ctx)
+    rows = _tool(mcp, "get_recent_deploys")("production")
+
+    assert [(r["repo"], r["tag"]) for r in rows] == [("maps", "v1.0.11"), ("dora", "v1.0.4")]
+    assert all("-dev" not in r["tag"] for r in rows), "dev tags are not production releases"
+
+    only = _tool(mcp, "get_recent_deploys")("production", repo="dora")
+    assert [r["repo"] for r in only] == ["dora"]
