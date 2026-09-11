@@ -18,15 +18,15 @@ if TYPE_CHECKING:  # pragma: no cover
 
 @dataclass
 class SensesCtx:
-    mimir: httpx.Client
+    prometheus: httpx.Client
     loki: httpx.Client
-    grafana: httpx.Client
+    alerts: httpx.Client | None
     cfg: Config
     vcs: VCSAdapter
 
 
 def _promql(ctx: SensesCtx, q: str) -> list[dict]:
-    r = ctx.mimir.get("/api/v1/query", params={"query": q})
+    r = ctx.prometheus.get("/api/v1/query", params={"query": q})
     r.raise_for_status()
     return r.json().get("data", {}).get("result", [])
 
@@ -131,15 +131,17 @@ def register(mcp: FastMCP, ctx: SensesCtx) -> None:
         return _scalar_or_zero(_promql(ctx, q), precision=4)
 
     def get_active_alerts() -> list[dict]:
-        """List Grafana alerts currently firing.
+        """List alerts currently firing in Alertmanager.
 
         Returns [{"name", "state", "labels", "started_at"}, ...].
         Call when asked about active alerts, what's firing, or current incidents.
         """
-        r = ctx.grafana.get(
-            "/api/alertmanager/grafana/api/v2/alerts",
-            params={"active": "true"},
-        )
+        if ctx.alerts is None:
+            raise RuntimeError(
+                "ALERTMANAGER_URL is not configured, so alert state cannot be read. "
+                "This is not the same as there being no alerts."
+            )
+        r = ctx.alerts.get("/api/v2/alerts", params={"active": "true"})
         r.raise_for_status()
         return [
             {

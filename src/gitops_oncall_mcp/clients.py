@@ -1,42 +1,42 @@
-"""httpx clients for Grafana datasource proxy + Grafana UI."""
+"""httpx clients for the observability query APIs.
+
+One builder per backend. Each returns a client already pointed at the base URL
+and carrying the shared bearer token when one is configured, so callers only
+ever write the API path.
+"""
 
 from __future__ import annotations
 
 import httpx
 
-from .config import GrafanaConfig
+from .config import ObservabilityConfig
 
 
-def _verify(grafana: GrafanaConfig) -> str | bool:
-    """Return the cert verification arg for httpx (path or True)."""
-    return grafana.ca_cert_path if grafana.ca_cert_path else True
+def _kwargs(obs: ObservabilityConfig, timeout: float) -> dict:
+    headers = {"Authorization": f"Bearer {obs.bearer_token}"} if obs.bearer_token else {}
+    return {
+        "headers": headers,
+        "verify": obs.ca_cert_path if obs.ca_cert_path else True,
+        "timeout": timeout,
+    }
 
 
-def mimir_client(grafana: GrafanaConfig, timeout: float = 15.0) -> httpx.Client:
-    """Mimir/Prometheus client via Grafana datasource proxy."""
-    return httpx.Client(
-        base_url=f"{grafana.url}/api/datasources/proxy/uid/{grafana.mimir_ds_uid}",
-        headers={"Authorization": f"Bearer {grafana.token}"},
-        verify=_verify(grafana),
-        timeout=timeout,
-    )
+def prometheus_client(obs: ObservabilityConfig, timeout: float = 15.0) -> httpx.Client:
+    """Prometheus HTTP API. Paths look like /api/v1/query."""
+    return httpx.Client(base_url=obs.prometheus_url, **_kwargs(obs, timeout))
 
 
-def loki_client(grafana: GrafanaConfig, timeout: float = 20.0) -> httpx.Client:
-    """Loki client via Grafana datasource proxy."""
-    return httpx.Client(
-        base_url=f"{grafana.url}/api/datasources/proxy/uid/{grafana.loki_ds_uid}",
-        headers={"Authorization": f"Bearer {grafana.token}"},
-        verify=_verify(grafana),
-        timeout=timeout,
-    )
+def loki_client(obs: ObservabilityConfig, timeout: float = 20.0) -> httpx.Client:
+    """Loki HTTP API. Paths look like /loki/api/v1/query_range."""
+    return httpx.Client(base_url=obs.loki_url, **_kwargs(obs, timeout))
 
 
-def grafana_client(grafana: GrafanaConfig, timeout: float = 15.0) -> httpx.Client:
-    """Grafana UI client (for alerts, dashboards, search)."""
-    return httpx.Client(
-        base_url=grafana.url,
-        headers={"Authorization": f"Bearer {grafana.token}"},
-        verify=_verify(grafana),
-        timeout=timeout,
-    )
+def alertmanager_client(obs: ObservabilityConfig, timeout: float = 15.0) -> httpx.Client | None:
+    """Alertmanager HTTP API, or None when no URL is configured.
+
+    Optional on purpose: a cluster can run without Alertmanager, and a tool that
+    says so is better than one that reports zero alerts.
+    """
+    if not obs.alertmanager_url:
+        return None
+    return httpx.Client(base_url=obs.alertmanager_url, **_kwargs(obs, timeout))

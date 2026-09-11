@@ -10,9 +10,9 @@ from gitops_oncall_mcp.config import (
     Config,
     DeployTagConfig,
     GitHubConfig,
-    GrafanaConfig,
     GuardrailsConfig,
     LabelConfig,
+    ObservabilityConfig,
     ServerConfig,
     VCSConfig,
 )
@@ -22,11 +22,11 @@ from gitops_oncall_mcp.config import (
 def cfg() -> Config:
     """A minimal Config that exercises every dataclass without hitting env vars."""
     return Config(
-        grafana=GrafanaConfig(
-            url="https://grafana.test",
-            token="test-token",
-            mimir_ds_uid="mimir-uid",
-            loki_ds_uid="loki-uid",
+        observability=ObservabilityConfig(
+            prometheus_url="http://prometheus.test",
+            loki_url="http://loki.test",
+            alertmanager_url="http://alertmanager.test",
+            bearer_token=None,
             ca_cert_path=None,
         ),
         labels=LabelConfig(env_key="env", team_key="team", team_value="testteam"),

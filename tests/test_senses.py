@@ -1,4 +1,4 @@
-"""Senses tools — mocked Mimir/Loki/Grafana via respx."""
+"""Senses tools with Prometheus, Loki and Alertmanager mocked by respx."""
 
 from __future__ import annotations
 
@@ -16,9 +16,9 @@ if TYPE_CHECKING:
 
 def _make_clients():
     return (
-        httpx.Client(base_url="https://grafana.test/api/datasources/proxy/uid/mimir-uid"),
-        httpx.Client(base_url="https://grafana.test/api/datasources/proxy/uid/loki-uid"),
-        httpx.Client(base_url="https://grafana.test"),
+        httpx.Client(base_url="http://prometheus.test"),
+        httpx.Client(base_url="http://loki.test"),
+        httpx.Client(base_url="http://alertmanager.test"),
     )
 
 
@@ -50,16 +50,16 @@ class _StubVCS:
 
 
 def _register(cfg):
-    mimir, loki, grafana = _make_clients()
+    prometheus, loki, alerts = _make_clients()
     mcp = FastMCP("test")
-    ctx = senses.SensesCtx(mimir=mimir, loki=loki, grafana=grafana, cfg=cfg, vcs=_StubVCS())
+    ctx = senses.SensesCtx(prometheus=prometheus, loki=loki, alerts=alerts, cfg=cfg, vcs=_StubVCS())
     senses.register(mcp, ctx)
     return mcp, ctx
 
 
 @respx.mock
 def test_get_cpu_usage(cfg):
-    respx.get("https://grafana.test/api/datasources/proxy/uid/mimir-uid/api/v1/query").respond(
+    respx.get("http://prometheus.test/api/v1/query").respond(
         json={
             "data": {
                 "result": [
@@ -76,7 +76,7 @@ def test_get_cpu_usage(cfg):
     # duplicate test. Instead just trust the integration path through a tool
     # call via the FastMCP test client (skipped for now).
     # For this skeleton: assert the underlying client call works.
-    r = ctx.mimir.get("/api/v1/query", params={"query": "up"})
+    r = ctx.prometheus.get("/api/v1/query", params={"query": "up"})
     assert r.status_code == 200
     data = r.json()
     assert len(data["data"]["result"]) == 2
@@ -85,31 +85,31 @@ def test_get_cpu_usage(cfg):
 @respx.mock
 def test_get_error_rate_no_traffic_returns_zero(cfg):
     """When PromQL returns NaN (no traffic), we guard to 0.0 instead of raising."""
-    respx.get("https://grafana.test/api/datasources/proxy/uid/mimir-uid/api/v1/query").respond(
+    respx.get("http://prometheus.test/api/v1/query").respond(
         json={"data": {"result": [{"metric": {}, "value": [0, "NaN"]}]}}
     )
-    mimir, loki, grafana = _make_clients()
-    ctx = senses.SensesCtx(mimir=mimir, loki=loki, grafana=grafana, cfg=cfg, vcs=_StubVCS())
-    r = ctx.mimir.get("/api/v1/query", params={"query": "test"})
+    prometheus, loki, alerts = _make_clients()
+    ctx = senses.SensesCtx(prometheus=prometheus, loki=loki, alerts=alerts, cfg=cfg, vcs=_StubVCS())
+    r = ctx.prometheus.get("/api/v1/query", params={"query": "test"})
     val = senses._scalar_or_zero(r.json().get("data", {}).get("result", []), precision=3)
     assert val == 0.0
 
 
 @respx.mock
 def test_get_error_rate_with_traffic(cfg):
-    respx.get("https://grafana.test/api/datasources/proxy/uid/mimir-uid/api/v1/query").respond(
+    respx.get("http://prometheus.test/api/v1/query").respond(
         json={"data": {"result": [{"metric": {}, "value": [0, "12.456"]}]}}
     )
-    mimir, loki, grafana = _make_clients()
-    ctx = senses.SensesCtx(mimir=mimir, loki=loki, grafana=grafana, cfg=cfg, vcs=_StubVCS())
-    r = ctx.mimir.get("/api/v1/query", params={"query": "test"})
+    prometheus, loki, alerts = _make_clients()
+    ctx = senses.SensesCtx(prometheus=prometheus, loki=loki, alerts=alerts, cfg=cfg, vcs=_StubVCS())
+    r = ctx.prometheus.get("/api/v1/query", params={"query": "test"})
     val = senses._scalar_or_zero(r.json().get("data", {}).get("result", []), precision=3)
     assert val == 12.456
 
 
 @respx.mock
 def test_get_active_alerts(cfg):
-    respx.get("https://grafana.test/api/alertmanager/grafana/api/v2/alerts").respond(
+    respx.get("http://alertmanager.test/api/v2/alerts").respond(
         json=[
             {
                 "labels": {"alertname": "ErrorRateHigh", "severity": "critical"},
@@ -118,8 +118,8 @@ def test_get_active_alerts(cfg):
             }
         ]
     )
-    mimir, loki, grafana = _make_clients()
-    r = grafana.get("/api/alertmanager/grafana/api/v2/alerts", params={"active": "true"})
+    prometheus, loki, alerts = _make_clients()
+    r = alerts.get("/api/v2/alerts", params={"active": "true"})
     alerts = r.json()
     assert len(alerts) == 1
     assert alerts[0]["labels"]["alertname"] == "ErrorRateHigh"

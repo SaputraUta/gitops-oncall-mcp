@@ -70,21 +70,21 @@ def test_tag_match_unknown_env():
 
 
 def test_config_from_env(monkeypatch):
-    monkeypatch.setenv("GRAFANA_URL", "https://g.example.com")
-    monkeypatch.setenv("GRAFANA_TOKEN", "tok")
-    monkeypatch.setenv("MIMIR_DS_UID", "m-uid")
-    monkeypatch.setenv("LOKI_DS_UID", "l-uid")
+    monkeypatch.setenv("PROMETHEUS_URL", "http://prometheus.monitoring.svc:9090")
+    monkeypatch.setenv("LOKI_URL", "http://loki.monitoring.svc:3100")
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
     monkeypatch.setenv("GITHUB_OWNER", "octocat")
     monkeypatch.setenv("GITHUB_REPO", "repo")
 
     cfg = Config.from_env()
-    assert cfg.grafana.url == "https://g.example.com"
+    assert cfg.observability.prometheus_url == "http://prometheus.monitoring.svc:9090"
+    assert cfg.observability.alertmanager_url is None
+    assert cfg.observability.bearer_token is None
     assert cfg.vcs.github.owner == "octocat"
     assert cfg.vcs.github.api_base == "https://api.github.com"
 
 
 def test_config_missing_required(monkeypatch):
-    monkeypatch.delenv("GRAFANA_URL", raising=False)
-    with pytest.raises(RuntimeError, match="GRAFANA_URL"):
+    monkeypatch.delenv("PROMETHEUS_URL", raising=False)
+    with pytest.raises(RuntimeError, match="PROMETHEUS_URL"):
         Config.from_env()

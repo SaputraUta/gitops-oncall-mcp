@@ -9,7 +9,7 @@ from starlette.responses import JSONResponse
 
 from .approval import ProposalStore
 from .audit import AuditLog
-from .clients import grafana_client, loki_client, mimir_client
+from .clients import alertmanager_client, loki_client, prometheus_client
 from .config import Config
 from .tools import hands as hands_tools
 from .tools import senses as senses_tools
@@ -36,16 +36,16 @@ def build_server() -> FastMCP:
     cfg = Config.from_env()
     mcp = FastMCP("gitops-oncall-mcp")
 
-    mimir = mimir_client(cfg.grafana)
-    loki = loki_client(cfg.grafana)
-    grafana = grafana_client(cfg.grafana)
+    prometheus = prometheus_client(cfg.observability)
+    loki = loki_client(cfg.observability)
+    alerts = alertmanager_client(cfg.observability)
     vcs = _build_vcs(cfg)
     proposals = ProposalStore(default_ttl_seconds=cfg.guardrails.proposal_ttl_seconds)
     audit = AuditLog(file_path=cfg.guardrails.audit_log_path)
 
     senses_tools.register(
         mcp,
-        senses_tools.SensesCtx(mimir=mimir, loki=loki, grafana=grafana, cfg=cfg, vcs=vcs),
+        senses_tools.SensesCtx(prometheus=prometheus, loki=loki, alerts=alerts, cfg=cfg, vcs=vcs),
     )
     hands_tools.register(
         mcp,

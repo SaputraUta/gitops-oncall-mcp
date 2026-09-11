@@ -19,28 +19,36 @@ def _optional(key: str, default: str = "") -> str:
 
 
 @dataclass(frozen=True)
-class GrafanaConfig:
-    url: str
-    token: str
-    mimir_ds_uid: str
-    loki_ds_uid: str
+class ObservabilityConfig:
+    """Where to reach the query APIs.
+
+    Addressed directly rather than through a Grafana datasource proxy, because
+    in a cluster these are Services and the shortest path is the honest one.
+    In-cluster they need no credential at all, so bearer_token is optional and
+    shared: if these sit behind one auth proxy it is one token, and if they do
+    not it is none.
+    """
+
+    prometheus_url: str
+    loki_url: str
+    alertmanager_url: str | None
+    bearer_token: str | None
     ca_cert_path: str | None  # absolute path or None
 
     @classmethod
-    def from_env(cls) -> GrafanaConfig:
-        cert = _optional("GRAFANA_CA_CERT_PATH") or None
+    def from_env(cls) -> ObservabilityConfig:
         return cls(
-            url=_required("GRAFANA_URL").rstrip("/"),
-            token=_required("GRAFANA_TOKEN"),
-            mimir_ds_uid=_required("MIMIR_DS_UID"),
-            loki_ds_uid=_required("LOKI_DS_UID"),
-            ca_cert_path=cert,
+            prometheus_url=_required("PROMETHEUS_URL").rstrip("/"),
+            loki_url=_required("LOKI_URL").rstrip("/"),
+            alertmanager_url=(_optional("ALERTMANAGER_URL").rstrip("/") or None),
+            bearer_token=(_optional("OBSERVABILITY_TOKEN") or None),
+            ca_cert_path=(_optional("OBSERVABILITY_CA_CERT_PATH") or None),
         )
 
 
 @dataclass(frozen=True)
 class LabelConfig:
-    """How services are labeled in Mimir/Loki."""
+    """How services are labeled in Prometheus and Loki."""
 
     env_key: str
     team_key: str
@@ -156,7 +164,7 @@ class GuardrailsConfig:
 
 @dataclass(frozen=True)
 class Config:
-    grafana: GrafanaConfig
+    observability: ObservabilityConfig
     labels: LabelConfig
     deploy_tags: DeployTagConfig
     vcs: VCSConfig
@@ -166,7 +174,7 @@ class Config:
     @classmethod
     def from_env(cls) -> Config:
         return cls(
-            grafana=GrafanaConfig.from_env(),
+            observability=ObservabilityConfig.from_env(),
             labels=LabelConfig.from_env(),
             deploy_tags=DeployTagConfig.from_env(),
             vcs=VCSConfig.from_env(),
