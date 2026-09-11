@@ -34,11 +34,11 @@ Reads, no side effects:
 
 | Tool | Source | Returns |
 |---|---|---|
-| `get_error_rate` | Prometheus | 5xx per second for an environment |
-| `get_latency_p95` | Prometheus | p95 request duration |
-| `get_cpu_usage` | Prometheus | per-service CPU against request |
-| `get_memory_usage` | Prometheus | per-service memory against limit |
-| `get_disk_usage` | Prometheus | volume utilisation |
+| `get_error_rate` | Prometheus | 5xx as a percentage of all requests, last 5m |
+| `get_latency_p95` | Prometheus | p95 request duration in seconds, last 5m |
+| `get_cpu_usage` | Prometheus | CPU percent per host |
+| `get_memory_usage` | Prometheus | memory percent per host |
+| `get_disk_usage` | Prometheus | root filesystem percent per host |
 | `get_active_alerts` | Alertmanager | currently firing alerts |
 | `search_logs` | Loki | log lines matching a substring in a window |
 | `get_recent_deploys` | GitHub | release tags and when they shipped |
@@ -59,6 +59,7 @@ Planned, not built yet:
 | Source | Reads |
 |---|---|
 | Kubernetes | pod status and restarts, events, Rollout state, AnalysisRun verdicts |
+| Prometheus | per-pod CPU and memory against request and limit, replacing the host-level queries inherited from the fork |
 | Argo CD | Application sync status, health, deployed revision |
 | Tempo | traces and span timings |
 
