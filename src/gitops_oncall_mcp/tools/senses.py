@@ -212,12 +212,8 @@ def register(mcp: FastMCP, ctx: SensesCtx) -> None:
         """
         now_ns = int(time.time() * 1e9)
         start_ns = int(now_ns - minutes * 60 * 1e9)
-        # Loki stream selector — env (+ optional team) only; app label is not assumed
-        selector_parts = [f'{labels.env_key}="{env}"']
-        if labels.team_value:
-            selector_parts.append(f'{labels.team_key}="{labels.team_value}"')
         needle = contains.replace("\\", "\\\\").replace('"', '\\"')
-        q = "{" + ", ".join(selector_parts) + "}" + f' |= "{needle}"'
+        q = "{" + labels.selector(env) + "}" + f' |= "{needle}"'
         r = ctx.loki.get(
             "/loki/api/v1/query_range",
             params={
@@ -231,9 +227,10 @@ def register(mcp: FastMCP, ctx: SensesCtx) -> None:
         r.raise_for_status()
         out: list[dict] = []
         for s in r.json().get("data", {}).get("result", []):
-            unit = s["stream"].get("unit") or s["stream"].get("service_name") or "?"
+            stream = s["stream"]
+            pod = stream.get("pod") or stream.get("app") or stream.get("service_name") or "?"
             for tsval in s.get("values", []):
-                out.append({"time": tsval[0], "unit": unit, "line": tsval[1]})
+                out.append({"time": tsval[0], "pod": pod, "line": tsval[1]})
         return out[:limit]
 
     def get_recent_deploys(env: str, limit: int = 5) -> list[dict]:

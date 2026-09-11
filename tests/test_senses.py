@@ -161,4 +161,4 @@ def test_search_logs_escapes_quotes(cfg):
     tool.fn(env="prod", contains='say "hi"')
 
     q = route.calls.last.request.url.params["query"]
-    assert q == '{env="prod", team="testteam"} |= "say \\"hi\\""'
+    assert q == '{env="prod",team="testteam"} |= "say \\"hi\\""'
