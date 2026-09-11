@@ -129,6 +129,7 @@ class GitHubConfig:
     api_base: str
     app_repos: tuple[str, ...] = ()  # repos that carry release tags
     values_path: str = "envs/{env}/values.yaml"  # {env} is substituted per environment
+    app_repos_token: str = ""  # read-only token for app_repos; empty reuses `token`
 
 
 @dataclass(frozen=True)
@@ -151,6 +152,7 @@ class VCSConfig:
                     r.strip() for r in _optional("GITHUB_APP_REPOS").split(",") if r.strip()
                 ),
                 values_path=_optional("GITHUB_VALUES_PATH", "envs/{env}/values.yaml"),
+                app_repos_token=_optional("GITHUB_APP_REPOS_TOKEN"),
             )
         )
 

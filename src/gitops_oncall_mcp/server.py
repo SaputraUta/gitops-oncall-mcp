@@ -32,9 +32,16 @@ def _build_app_vcs(cfg: Config) -> dict[str, VCSAdapter]:
     "what shipped" cannot be answered from a single adapter. The adapter code
     is per-repo already, so this is a mapping rather than a rewrite.
     """
+    gh = cfg.vcs.github
+    # The config repo needs write access to open pull requests; the app repos
+    # are only ever read. A fine-grained PAT grants its permissions across every
+    # repository it selects, so keeping them on one token would hand write
+    # access to the application repos as well. GITHUB_APP_REPOS_TOKEN lets the
+    # read half be a read-only token; unset, it reuses the one token.
+    token = gh.app_repos_token or gh.token
     return {
-        name: GitHubAdapter(dataclasses.replace(cfg.vcs.github, repo=name))
-        for name in cfg.vcs.github.app_repos
+        name: GitHubAdapter(dataclasses.replace(gh, repo=name, token=token))
+        for name in gh.app_repos
     }
 
 

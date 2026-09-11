@@ -89,28 +89,68 @@ def test_get_cpu_usage_reports_percent_of_limit(cfg):
 
 
 @respx.mock
-def test_get_error_rate_no_traffic_returns_none(cfg):
-    """NaN means no traffic in the window, which is None — not a measured zero."""
+def test_get_error_rate_is_none_without_traffic_and_zero_with_it(cfg):
+    """None and 0.0 are different answers and must not be collapsed."""
     respx.get("http://prometheus.test/api/v1/query").respond(
         json={"data": {"result": [{"metric": {}, "value": [0, "NaN"]}]}}
     )
-    prometheus, loki, alerts = _make_clients()
-    ctx = senses.SensesCtx(prometheus=prometheus, loki=loki, alerts=alerts, cfg=cfg, vcs=_StubVCS())
-    r = ctx.prometheus.get("/api/v1/query", params={"query": "test"})
-    val = senses._scalar_or_none(r.json().get("data", {}).get("result", []), precision=3)
-    assert val is None
+    mcp, _ = _register(cfg)
+    assert _tool(mcp, "get_error_rate")("production") is None, "no traffic is not zero errors"
+
+    respx.get("http://prometheus.test/api/v1/query").respond(
+        json={"data": {"result": [{"metric": {}, "value": [0, "0"]}]}}
+    )
+    mcp, _ = _register(cfg)
+    assert _tool(mcp, "get_error_rate")("production") == 0.0, "measured zero must stay zero"
 
 
 @respx.mock
-def test_get_error_rate_with_traffic(cfg):
-    respx.get("http://prometheus.test/api/v1/query").respond(
+def test_get_error_rate_window_and_zero_guard_reach_the_query(cfg):
+    """The lookback must be the caller's, and a genuine zero must be guarded."""
+    route = respx.get("http://prometheus.test/api/v1/query").respond(
         json={"data": {"result": [{"metric": {}, "value": [0, "12.456"]}]}}
     )
-    prometheus, loki, alerts = _make_clients()
-    ctx = senses.SensesCtx(prometheus=prometheus, loki=loki, alerts=alerts, cfg=cfg, vcs=_StubVCS())
-    r = ctx.prometheus.get("/api/v1/query", params={"query": "test"})
-    val = senses._scalar_or_none(r.json().get("data", {}).get("result", []), precision=3)
-    assert val == 12.456
+    mcp, _ = _register(cfg)
+    assert _tool(mcp, "get_error_rate")("production", minutes=15) == 12.456
+
+    q = route.calls.last.request.url.params["query"]
+    assert "[15m]" in q and "[30m]" not in q, "the window must come from the argument"
+    assert "or vector(0)" in q, "an absent 5xx series must read as zero, not as no data"
+
+
+@respx.mock
+def test_get_latency_p95_is_none_without_traffic(cfg):
+    respx.get("http://prometheus.test/api/v1/query").respond(
+        json={"data": {"result": []}}
+    )
+    mcp, _ = _register(cfg)
+    assert _tool(mcp, "get_latency_p95")("production") is None
+
+
+@respx.mock
+def test_get_active_alerts_falls_back_to_prometheus(cfg):
+    """Without Alertmanager the alerts still come back, labelled as the lesser view."""
+    respx.get("http://prometheus.test/api/v1/alerts").respond(
+        json={"data": {"alerts": [
+            {"labels": {"alertname": "KubeCPUOvercommit", "severity": "warning"},
+             "annotations": {"summary": "Cluster has overcommitted CPU."},
+             "state": "firing", "activeAt": "2026-09-11T00:00:00Z"},
+            {"labels": {"alertname": "KubeSchedulerDown", "severity": "critical"},
+             "annotations": {}, "state": "firing", "activeAt": "2026-09-11T00:00:00Z"},
+            {"labels": {"alertname": "NotYet", "severity": "critical"},
+             "annotations": {}, "state": "pending", "activeAt": "2026-09-11T00:00:00Z"},
+        ]}}
+    )
+    prometheus, loki, _ = _make_clients()
+    mcp = FastMCP("test")
+    ctx = senses.SensesCtx(prometheus=prometheus, loki=loki, alerts=None, cfg=cfg, vcs=_StubVCS())
+    senses.register(mcp, ctx)
+    alerts = _tool(mcp, "get_active_alerts")()
+
+    assert [a["name"] for a in alerts] == ["KubeSchedulerDown", "KubeCPUOvercommit"], (
+        "pending is not firing, and critical sorts above warning"
+    )
+    assert alerts[0]["source"].startswith("prometheus"), "the weaker view must say so"
 
 
 @respx.mock
