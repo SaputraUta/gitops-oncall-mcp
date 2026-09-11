@@ -171,7 +171,8 @@ def register(mcp: FastMCP, ctx: SensesCtx) -> None:
         selector_parts = [f'{labels.env_key}="{env}"']
         if labels.team_value:
             selector_parts.append(f'{labels.team_key}="{labels.team_value}"')
-        q = "{" + ", ".join(selector_parts) + "}" + f' |= "{contains}"'
+        needle = contains.replace("\\", "\\\\").replace('"', '\\"')
+        q = "{" + ", ".join(selector_parts) + "}" + f' |= "{needle}"'
         r = ctx.loki.get(
             "/loki/api/v1/query_range",
             params={

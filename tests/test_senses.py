@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import asyncio
 import httpx
 import respx
 from fastmcp import FastMCP
@@ -144,3 +145,15 @@ def test_vcs_recent_deploys_filters_by_env(cfg):
     assert any(t.tag == "v1.0.0-stag" for t in staging_tags)
     assert any(t.tag == "v1.0.0" for t in prod_tags)
     assert not any(t.tag == "v1.0.0" for t in staging_tags)
+
+@respx.mock
+def test_search_logs_escapes_quotes(cfg):
+    route = respx.get("http://loki.test/loki/api/v1/query_range").respond(
+        json={"data": {"result": []}}
+    )
+    mcp, _ = _register(cfg)
+    tool = asyncio.run(mcp.get_tool("search_logs"))
+    tool.fn(env="prod", contains='say "hi"')
+
+    q = route.calls.last.request.url.params["query"]
+    assert q == '{env="prod", team="testteam"} |= "say \\"hi\\""'
