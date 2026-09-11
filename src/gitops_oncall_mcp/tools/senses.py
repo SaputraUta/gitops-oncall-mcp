@@ -187,27 +187,53 @@ def register(mcp: FastMCP, ctx: SensesCtx) -> None:
         return _scalar_or_none(_promql(ctx, q), precision=4)
 
     def get_active_alerts() -> list[dict]:
-        """List alerts currently firing in Alertmanager.
+        """Alerts currently firing.
 
-        Returns [{"name", "state", "labels", "started_at"}, ...].
-        Call when asked about active alerts, what's firing, or current incidents.
+        Returns [{"name", "severity", "state", "source", "summary",
+        "runbook_url", "labels", "started_at"}, ...].
+
+        Prefers Alertmanager when one is configured, because only Alertmanager
+        knows what a human has silenced, and a silenced alert is not an
+        incident. Without one it falls back to Prometheus, which is where
+        alerts are evaluated in the first place — `source` says which view you
+        got, so a silenced-but-firing alert is not mistaken for a live one.
         """
-        if ctx.alerts is None:
-            raise RuntimeError(
-                "ALERTMANAGER_URL is not configured, so alert state cannot be read. "
-                "This is not the same as there being no alerts."
-            )
-        r = ctx.alerts.get("/api/v2/alerts", params={"active": "true"})
+        if ctx.alerts is not None:
+            r = ctx.alerts.get("/api/v2/alerts", params={"active": "true"})
+            r.raise_for_status()
+            return [
+                {
+                    "name": a.get("labels", {}).get("alertname", "?"),
+                    "severity": a.get("labels", {}).get("severity"),
+                    "state": a.get("status", {}).get("state", "?"),
+                    "source": "alertmanager",
+                    "summary": a.get("annotations", {}).get("summary"),
+                    "runbook_url": a.get("annotations", {}).get("runbookURL"),
+                    "labels": a.get("labels", {}),
+                    "started_at": a.get("startsAt", ""),
+                }
+                for a in r.json()
+            ]
+
+        r = ctx.prometheus.get("/api/v1/alerts")
         r.raise_for_status()
-        return [
+        alerts = r.json().get("data", {}).get("alerts", [])
+        out = [
             {
                 "name": a.get("labels", {}).get("alertname", "?"),
-                "state": a.get("status", {}).get("state", "?"),
+                "severity": a.get("labels", {}).get("severity"),
+                "state": a.get("state", "?"),
+                "source": "prometheus (silences not visible)",
+                "summary": (a.get("annotations", {}).get("summary") or "").strip(),
+                "runbook_url": a.get("annotations", {}).get("runbook_url"),
                 "labels": a.get("labels", {}),
-                "started_at": a.get("startsAt", ""),
+                "started_at": a.get("activeAt", ""),
             }
-            for a in r.json()
+            for a in alerts
+            if a.get("state") == "firing"
         ]
+        order = {"critical": 0, "warning": 1, "info": 2, "none": 3}
+        return sorted(out, key=lambda a: order.get(a["severity"], 9))
 
     def search_logs(env: str, contains: str, minutes: int = 60, limit: int = 50) -> list[dict]:
         """Search logs in Loki for lines containing a substring.

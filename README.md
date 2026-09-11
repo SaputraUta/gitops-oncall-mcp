@@ -5,6 +5,8 @@
 
 An MCP server that gives an LLM agent a typed, auditable on-call surface over a GitOps-on-Kubernetes platform: Kubernetes, Argo CD, Argo Rollouts, Prometheus, Loki, Tempo and GitHub.
 
+Requires a Kubernetes cluster. The resource tools read cAdvisor and kube-state-metrics per pod, and the delivery tools read Argo CD and Argo Rollouts custom resources, so there is no meaningful way to run this against plain hosts.
+
 Status: work in progress. Forked from [lgtm-oncall-mcp](https://github.com/SaputraUta/lgtm-oncall-mcp), which targets a hosted Grafana LGTM stack. This one targets a cluster you run yourself, and adds the Kubernetes and Argo surface the other project has no reason to carry.
 
 ## Why an MCP server and not a shell
@@ -34,16 +36,27 @@ Reads, no side effects:
 
 | Tool | Source | Returns |
 |---|---|---|
-| `get_error_rate` | Prometheus | 5xx as a percentage of all requests, last 5m |
-| `get_latency_p95` | Prometheus | p95 request duration in seconds, last 5m |
-| `get_cpu_usage` | Prometheus | CPU percent per host |
-| `get_memory_usage` | Prometheus | memory percent per host |
-| `get_disk_usage` | Prometheus | root filesystem percent per host |
-| `get_active_alerts` | Alertmanager | currently firing alerts |
-| `search_logs` | Loki | log lines matching a substring in a window |
-| `get_recent_deploys` | GitHub | release tags and when they shipped |
+| `get_error_rate` | Prometheus | 5xx as a percentage of all requests, or `None` when the window held no traffic |
+| `get_latency_p95` | Prometheus | p95 request duration in seconds, or `None` when the window held no traffic |
+| `get_cpu_usage` | Prometheus | cores per pod, against that pod's own limit |
+| `get_memory_usage` | Prometheus | working-set MiB per pod, against that pod's own limit |
+| `get_disk_usage` | Prometheus | root filesystem percent per node |
+| `get_active_alerts` | Alertmanager, else Prometheus | firing alerts, worst severity first |
+| `search_logs` | Loki | log lines matching a substring in a window, labelled by pod |
+| `get_pods` | Kubernetes | phase, readiness, restarts, age, and what looks wrong |
+| `get_events` | Kubernetes | recent warnings, within a recency window |
+| `get_rollouts` | Argo Rollouts | running image tag, canary step, whether traffic is fully shifted |
+| `get_analysis_runs` | Argo Rollouts | the verdict that advanced or aborted a canary, and why |
+| `get_argocd_apps` | Argo CD | sync status, health, target revision, last sync |
+| `get_recent_deploys` | GitHub | release tags across every application repo, newest first |
 | `get_commit_diff` | GitHub | the diff for one commit |
 | `get_file_commits` | GitHub | history for one path |
+
+Two of these carry a deliberate warning in their docstring, because the obvious
+reading is wrong. Events are historical, so an event from hours ago may already
+be resolved. And an Argo CD Application can read `Synced` while a rollout is
+aborted, because Argo CD compares the spec and the refusal lives in the
+rollout's status.
 
 Writes, split in two so a single confused turn cannot act:
 
@@ -58,10 +71,11 @@ Planned, not built yet:
 
 | Source | Reads |
 |---|---|
-| Kubernetes | pod status and restarts, events, Rollout state, AnalysisRun verdicts |
-| Prometheus | per-pod CPU and memory against request and limit, replacing the host-level queries inherited from the fork |
-| Argo CD | Application sync status, health, deployed revision |
 | Tempo | traces and span timings |
+
+`propose_rollback` still dispatches a deploy workflow, inherited from the fork.
+In this platform a rollback is a commit to the config repository, so that pair
+is due to be rebuilt on the pull-request path.
 
 ## Configuration
 
@@ -73,11 +87,19 @@ The observability endpoints are addressed directly rather than through a Grafana
 |---|---|---|
 | `PROMETHEUS_URL` | yes | Prometheus HTTP API |
 | `LOKI_URL` | yes | Loki HTTP API |
-| `ALERTMANAGER_URL` | no | Alertmanager HTTP API. Unset makes `get_active_alerts` fail loudly instead of reporting zero alerts |
+| `ALERTMANAGER_URL` | no | Alertmanager HTTP API. Unset falls back to Prometheus, which evaluates the alerts but cannot see silences |
 | `OBSERVABILITY_TOKEN` | no | bearer sent to all three, for setups behind an auth proxy |
-| `GITHUB_TOKEN` | yes | fine-grained PAT, scoped to the config repository only |
-| `GITHUB_OWNER`, `GITHUB_REPO` | yes | the config repository |
+| `K8S_NAMESPACE` | yes | the one namespace the Kubernetes tools may read |
+| `ARGOCD_NAMESPACE` | no | where Argo CD runs, default `argocd` |
+| `ENV_LABEL_KEY` | no | label that identifies the environment, default `env`; set to `namespace` when environments are namespaces |
+| `ENV_VALUE_MAP` | no | maps the environment names the agent uses onto the label values your metrics carry |
+| `GITHUB_TOKEN` | yes | fine-grained PAT, scoped to the repositories below and nothing else |
+| `GITHUB_OWNER`, `GITHUB_REPO` | yes | the config repository, where pull requests are opened |
+| `GITHUB_APP_REPOS` | no | application repositories, which is where release tags live |
 | `MCP_BEARER_TOKEN` | when not loopback | shared secret required on every request |
+
+The namespace is configuration rather than a tool argument on purpose: the model
+chooses what to ask about, never what it has access to.
 
 ## Running
 
