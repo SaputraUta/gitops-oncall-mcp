@@ -80,10 +80,14 @@ class LabelConfig:
 @dataclass(frozen=True)
 class K8sConfig:
     namespace: str
+    argocd_namespace: str = "argocd"
     
     @classmethod
     def from_env(cls) -> K8sConfig:
-        return cls(namespace=_required("K8S_NAMESPACE"))
+        return cls(
+            namespace=_required("K8S_NAMESPACE"),
+            argocd_namespace=_optional("ARGOCD_NAMESPACE", "argocd"),
+        )
 
 @dataclass(frozen=True)
 class DeployTagConfig:
