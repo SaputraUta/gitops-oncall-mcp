@@ -70,7 +70,14 @@ class LabelConfig:
         if extra:
             parts.append(extra)
         return ",".join(parts)
-
+    
+@dataclass(frozen=True)
+class K8sConfig:
+    namespace: str
+    
+    @classmethod
+    def from_env(cls) -> K8sConfig:
+        return cls(namespace=_required("K8S_NAMESPACE"))
 
 @dataclass(frozen=True)
 class DeployTagConfig:
@@ -170,12 +177,14 @@ class Config:
     vcs: VCSConfig
     server: ServerConfig
     guardrails: GuardrailsConfig
+    k8s: K8sConfig
 
     @classmethod
     def from_env(cls) -> Config:
         return cls(
             observability=ObservabilityConfig.from_env(),
             labels=LabelConfig.from_env(),
+            k8s=K8sConfig.from_env(),
             deploy_tags=DeployTagConfig.from_env(),
             vcs=VCSConfig.from_env(),
             server=ServerConfig.from_env(),

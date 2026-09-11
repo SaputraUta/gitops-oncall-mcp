@@ -8,6 +8,7 @@ ever write the API path.
 from __future__ import annotations
 
 import httpx
+from kubernetes import client, config
 
 from .config import ObservabilityConfig
 
@@ -40,3 +41,10 @@ def alertmanager_client(obs: ObservabilityConfig, timeout: float = 15.0) -> http
     if not obs.alertmanager_url:
         return None
     return httpx.Client(base_url=obs.alertmanager_url, **_kwargs(obs, timeout))
+
+def k8s_clients() -> tuple[client.CoreV1Api, client.CustomObjectsApi]:
+    try:
+        config.load_incluster_config()
+    except:
+        config.load_kube_config()
+    return client.CoreV1Api(), client.CustomObjectsApi()

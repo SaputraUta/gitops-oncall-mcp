@@ -9,9 +9,10 @@ from starlette.responses import JSONResponse
 
 from .approval import ProposalStore
 from .audit import AuditLog
-from .clients import alertmanager_client, loki_client, prometheus_client
+from .clients import alertmanager_client, k8s_clients, loki_client, prometheus_client
 from .config import Config
 from .tools import hands as hands_tools
+from .tools import k8s as k8s_tools
 from .tools import senses as senses_tools
 from .vcs.base import VCSAdapter
 from .vcs.github import GitHubAdapter
@@ -39,6 +40,7 @@ def build_server() -> FastMCP:
     prometheus = prometheus_client(cfg.observability)
     loki = loki_client(cfg.observability)
     alerts = alertmanager_client(cfg.observability)
+    core, custom = k8s_clients()
     vcs = _build_vcs(cfg)
     proposals = ProposalStore(default_ttl_seconds=cfg.guardrails.proposal_ttl_seconds)
     audit = AuditLog(file_path=cfg.guardrails.audit_log_path)
@@ -47,6 +49,7 @@ def build_server() -> FastMCP:
         mcp,
         senses_tools.SensesCtx(prometheus=prometheus, loki=loki, alerts=alerts, cfg=cfg, vcs=vcs),
     )
+    k8s_tools.register(mcp, k8s_tools.K8sCtx(core=core, custom=custom, cfg=cfg))
     hands_tools.register(
         mcp,
         hands_tools.HandsCtx(cfg=cfg, vcs=vcs, proposals=proposals, audit=audit),
