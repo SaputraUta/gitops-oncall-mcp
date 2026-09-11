@@ -6,10 +6,10 @@ import re
 
 import pytest
 
-from lgtm_oncall_mcp.config import (
-    BitbucketConfig,
+from gitops_oncall_mcp.config import (
     Config,
     DeployTagConfig,
+    GitHubConfig,
     GrafanaConfig,
     GuardrailsConfig,
     LabelConfig,
@@ -35,14 +35,13 @@ def cfg() -> Config:
             nonprod_suffixes={"dev": "-dev", "staging": "-stag"},
         ),
         vcs=VCSConfig(
-            provider="bitbucket",
-            bitbucket=BitbucketConfig(
-                email="a@b.com",
-                api_token="x",
-                workspace="ws",
-                repo_slug="repo",
-            ),
-            github=None,
+            github=GitHubConfig(
+                token="ghp_test",
+                owner="octocat",
+                repo="repo",
+                deploy_workflow="deploy.yml",
+                api_base="https://api.github.com",
+            )
         ),
         server=ServerConfig(host="127.0.0.1", port=8765, bearer_token=""),
         guardrails=GuardrailsConfig(proposal_ttl_seconds=600, audit_log_path=None),

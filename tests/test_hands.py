@@ -9,10 +9,10 @@ from typing import Any
 import pytest
 from fastmcp import FastMCP
 
-from lgtm_oncall_mcp.approval import ProposalStore
-from lgtm_oncall_mcp.audit import AuditLog
-from lgtm_oncall_mcp.tools import hands
-from lgtm_oncall_mcp.vcs.base import PipelineResult, PRResult
+from gitops_oncall_mcp.approval import ProposalStore
+from gitops_oncall_mcp.audit import AuditLog
+from gitops_oncall_mcp.tools import hands
+from gitops_oncall_mcp.vcs.base import PipelineResult, PRResult
 
 
 class _StubVCS:
@@ -24,7 +24,7 @@ class _StubVCS:
         self.next_pr = PRResult(pr_url="https://example/pr/1", pr_id=1, branch="ai-fix/x")
         self.fail = False
 
-    # Senses/vision unused here, stubbed:
+    # Senses unused here, stubbed:
     def list_tags(self, limit=50):
         return []
 

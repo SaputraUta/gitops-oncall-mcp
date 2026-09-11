@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from typing import Literal
 
 
 def _required(key: str) -> str:
@@ -89,17 +88,6 @@ class DeployTagConfig:
         return bool(suffix) and tag.endswith(suffix)
 
 
-VCSProvider = Literal["bitbucket", "github"]
-
-
-@dataclass(frozen=True)
-class BitbucketConfig:
-    email: str
-    api_token: str
-    workspace: str
-    repo_slug: str
-
-
 @dataclass(frozen=True)
 class GitHubConfig:
     token: str
@@ -111,33 +99,22 @@ class GitHubConfig:
 
 @dataclass(frozen=True)
 class VCSConfig:
-    provider: VCSProvider
-    bitbucket: BitbucketConfig | None
-    github: GitHubConfig | None
+    """GitHub only for now. VCSAdapter stays an interface so another backend
+    is one file plus a discriminator, not a refactor."""
+
+    github: GitHubConfig
 
     @classmethod
     def from_env(cls) -> VCSConfig:
-        provider = _optional("VCS_PROVIDER", "bitbucket").lower()
-        if provider not in ("bitbucket", "github"):
-            raise RuntimeError(f"VCS_PROVIDER must be 'bitbucket' or 'github', got {provider!r}")
-        bb = None
-        gh = None
-        if provider == "bitbucket":
-            bb = BitbucketConfig(
-                email=_required("BITBUCKET_EMAIL"),
-                api_token=_required("BITBUCKET_API_TOKEN"),
-                workspace=_required("BITBUCKET_WORKSPACE"),
-                repo_slug=_required("BITBUCKET_REPO_SLUG"),
-            )
-        else:
-            gh = GitHubConfig(
+        return cls(
+            github=GitHubConfig(
                 token=_required("GITHUB_TOKEN"),
                 owner=_required("GITHUB_OWNER"),
                 repo=_required("GITHUB_REPO"),
                 deploy_workflow=_optional("GITHUB_DEPLOY_WORKFLOW", "deploy.yml"),
                 api_base=_optional("GITHUB_API_BASE", "https://api.github.com").rstrip("/"),
             )
-        return cls(provider=provider, bitbucket=bb, github=gh)  # type: ignore[arg-type]
+        )
 
 
 @dataclass(frozen=True)

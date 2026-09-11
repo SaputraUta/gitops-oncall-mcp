@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from lgtm_oncall_mcp.approval import ProposalStore
+from gitops_oncall_mcp.approval import ProposalStore
 
 
 def test_create_returns_id_and_stores_payload():

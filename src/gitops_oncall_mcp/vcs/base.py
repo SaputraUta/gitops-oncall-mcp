@@ -1,4 +1,4 @@
-"""VCS adapter interface — implemented by Bitbucket and GitHub backends."""
+"""VCS adapter interface. GitHub is the only backend today."""
 
 from __future__ import annotations
 

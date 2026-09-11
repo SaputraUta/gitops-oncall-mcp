@@ -1,4 +1,4 @@
-"""VCS adapters (Bitbucket Cloud, GitHub) implementing a common interface."""
+"""VCS adapters implementing a common interface."""
 
 from .base import Commit, PipelineResult, PRResult, TagInfo, VCSAdapter
 

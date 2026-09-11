@@ -1,375 +1,61 @@
-# lgtm-oncall-mcp
+# gitops-oncall-mcp
 
-[![CI](https://github.com/SaputraUta/lgtm-oncall-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/SaputraUta/lgtm-oncall-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
-> An MCP server that gives an LLM agent a typed, auditable on-call surface on top of the LGTM stack (**L**oki · **G**rafana · **T**empo · **M**imir) plus your VCS (Bitbucket Cloud or GitHub).
+> An MCP server that gives an LLM agent a typed, auditable on-call surface over a GitOps-on-Kubernetes platform: **Kubernetes**, **Argo CD**, **Argo Rollouts**, **Prometheus**, **Loki**, **Tempo** and **GitHub**.
 
-Replaces broad shell-and-SSH agent power with narrow, schema-checked tools. Same toolbox works for autonomous on-call agents (e.g. Hermes responding to Grafana webhooks via Telegram) and interactive copilots (Claude Code, Claude Desktop, Cursor, …).
-
-> Status: **alpha**. The core flow works end-to-end. Interfaces may still shift.
+> Status: **work in progress.** Forked from [lgtm-oncall-mcp](https://github.com/SaputraUta/lgtm-oncall-mcp), which targets a Grafana Cloud style LGTM stack. This one targets a cluster you run yourself, and adds the Kubernetes and Argo surface that project has no reason to carry.
 
 ---
 
-## Demo
+## Why an MCP server and not a shell
 
-**Interactive — Claude Code driving the propose → confirm → verify flow against a real LGTM + Bitbucket stack:**
+The easy version of an on-call agent is to hand a model `kubectl` and a terminal. It demos well and is indefensible, because the agent's capability becomes "anything the kubeconfig can do", and the only thing between a hallucination and a deleted namespace is the model's judgement.
 
-![Claude Code rollback flow](docs/screenshots/claude-code-rollback.png)
+This inverts it. The agent gets a fixed set of typed tools and nothing else. What it is able to do becomes a code review question rather than a prompting question.
 
-Three exchanges, all calling `lgtm-oncall` MCP tools:
-1. `propose rollback staging to v0.0.39-stag` — returns a one-shot `proposal_id` with TTL. No deploy yet.
-2. `yes, rollback` — agent calls `confirm_rollback` with the id; pipeline triggers.
-3. `pipeline finished, check` — agent re-pulls health metrics + diffs the tags to narrate what was rolled back from/to.
+The layering is also the folder structure:
 
-**Autonomous — Hermes Agent (Nous Research) responding to a Grafana webhook in Telegram, using the same tools:**
-
-![Hermes Telegram triage](docs/screenshots/hermes-telegram-triage.png)
-
-Webhook fires → Hermes triages with the read-only `get_*` tools → proposes rollback to `v0.0.39-stag` → waits for user `yes` before calling `confirm_rollback`.
-
-Same 19 tools. Different operator. One MCP server.
-
----
-
-## What it gives the agent
-
-Three groups, 16 tools total:
-
-**Senses** (read-only, query Mimir / Loki / Grafana / your VCS):
-- `ping`
-- `get_cpu_usage(env)`
-- `get_memory_usage(env)`
-- `get_disk_usage(env)`
-- `get_error_rate(env)`
-- `get_latency_p95(env)`
-- `get_active_alerts()`
-- `search_logs(env, contains, minutes, limit)`
-- `get_recent_deploys(env, limit)`
-- `get_commit_diff(sha, max_chars)`
-- `get_file_commits(path, limit)`
-
-**Vision** (Grafana screenshots via headless Chrome):
-- `list_dashboards()`
-- `list_panels(dashboard_uid)`
-- `capture_dashboard(uid, env, minutes)`
-- `capture_panel(dashboard_uid, panel_id, env, minutes)`
-
-**Hands** (destructive, **two-step**: propose → confirm. See [Guardrails](#guardrails) below):
-- `propose_rollback(env, target_tag)` → returns `proposal_id` (no side effect)
-- `confirm_rollback(proposal_id)` → reruns the deploy pipeline. One-shot, expires in TTL.
-- `propose_pr_change(branch, file_path, new_content, title, body, base_branch)` → returns `proposal_id`
-- `confirm_pr_change(proposal_id)` → opens the PR. One-shot, expires in TTL.
-
----
-
-## Quickstart
-
-Requires Python 3.11+ and a running LGTM stack you can reach.
-
-```bash
-# 1. Install
-pip install lgtm-oncall-mcp
-python -m playwright install chromium
-
-# 2. Configure
-cp .env.example .env
-$EDITOR .env      # fill in GRAFANA_URL, GRAFANA_TOKEN, MIMIR_DS_UID, LOKI_DS_UID, VCS_*
-
-# 3. Run
-set -a; source .env; set +a
-lgtm-oncall-mcp
-# → MCP server listening on http://127.0.0.1:8765/mcp
-```
-
-Smoke test from another shell:
-
-```bash
-curl -s http://127.0.0.1:8765/mcp -X POST \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","method":"initialize","id":1,"params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
-```
-
-You should get a JSON response listing capabilities.
-
----
-
-## Connecting MCP clients
-
-Full per-client guides with troubleshooting are in [`examples/clients/`](./examples/clients/). Short version below.
-
-### Claude Code (CLI)
-
-```bash
-claude mcp add lgtm-oncall --transport http http://localhost:8765/mcp
-claude mcp list   # should print "✓ Connected"
-```
-
-### Claude Desktop (GUI)
-
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "lgtm-oncall": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "http://localhost:8765/mcp"]
-    }
-  }
-}
-```
-
-Fully quit Claude Desktop (Cmd+Q) and reopen.
-
-### Generic / other clients
-
-Any MCP client that speaks streamable HTTP can connect to `http://<host>:8765/mcp`. If you set `MCP_BEARER_TOKEN`, the client must send `Authorization: Bearer <token>`.
-
-### Autonomous on-call agent (e.g. Hermes by Nous Research)
-
-```bash
-hermes mcp add lgtm-oncall --url http://127.0.0.1:8765/mcp
-hermes mcp test lgtm-oncall   # lists all tools
-```
-
-Wire your Grafana alert contact point to the agent's webhook, and the agent will pick up the alert and decide which tools to call.
-
----
-
-## Configuration reference
-
-All configuration is environment-driven. Copy `.env.example` to `.env` to start.
-
-### Always required
-
-| Var | Default | Purpose |
+| Layer | Enforced by | Where |
 |---|---|---|
-| `GRAFANA_URL` | — | Base URL of your Grafana |
-| `GRAFANA_TOKEN` | — | Grafana service-account token (Viewer scope is enough) |
-| `MIMIR_DS_UID` | — | Mimir/Prometheus datasource UID in Grafana |
-| `LOKI_DS_UID` | — | Loki datasource UID in Grafana |
-| `VCS_PROVIDER` | `bitbucket` | Pick one: `bitbucket` or `github` |
+| What the identity can do | the cluster | a ServiceAccount with read verbs only |
+| What the agent can express | this code | `tools/senses.py` reads, `tools/hands.py` acts |
+| What a human agreed to | runtime | `approval.py`, a one-shot proposal id with a TTL |
+| What happened | after the fact | `audit.py` |
 
-### Required if `VCS_PROVIDER=bitbucket`
+## The property worth stating
 
-| Var | Default | Purpose |
-|---|---|---|
-| `BITBUCKET_EMAIL` | — | Email associated with your Atlassian API token |
-| `BITBUCKET_API_TOKEN` | — | Atlassian API token (starts with `ATAT…`) — **not** a username/password |
-| `BITBUCKET_WORKSPACE` | — | e.g. `mycompany` (the `<workspace>` in `bitbucket.org/<workspace>/<repo>`) |
-| `BITBUCKET_REPO_SLUG` | — | e.g. `my-app` |
+**The agent never writes to the cluster. It writes to Git.**
 
-Token scopes you need (Atlassian → Manage account → API tokens → Create with scopes):
-- `read:repository:bitbucket`
-- `read:pullrequest:bitbucket`
-- `write:repository:bitbucket` *(only if you use `propose_fix_pr`)*
-- `write:pullrequest:bitbucket` *(only if you use `propose_fix_pr`)*
-- `read:pipeline:bitbucket`
-- `write:pipeline:bitbucket` *(only if you use `rollback_deploy`)*
+Its ServiceAccount carries no write verbs at all, so mutation is not available to it even if every other layer fails. A change it proposes becomes a pull request against the config repository, which Argo CD then syncs and Argo Rollouts then canaries. Every safety mechanism the platform already has applies to the agent for free, and undoing it is `git revert`, exactly as it would be for a human.
 
-### Required if `VCS_PROVIDER=github`
+## Planned surface
 
-| Var | Default | Purpose |
-|---|---|---|
-| `GITHUB_TOKEN` | — | Fine-grained PAT scoped to ONE repo |
-| `GITHUB_OWNER` | — | e.g. `myorg` or your username |
-| `GITHUB_REPO` | — | e.g. `my-app` |
-| `GITHUB_DEPLOY_WORKFLOW` | `deploy.yml` | The workflow file `rollback_deploy` dispatches. Must exist at `.github/workflows/<name>` with `on: workflow_dispatch` |
-| `GITHUB_API_BASE` | `https://api.github.com` | Override only for GitHub Enterprise |
+| Source | Reads |
+|---|---|
+| Kubernetes | pod status and restarts, events, Rollout state, AnalysisRun verdicts |
+| Argo CD | Application sync status, health, deployed revision |
+| Prometheus | error rate, latency, saturation |
+| Loki | logs by service and pod |
+| Tempo | traces and span timings |
+| GitHub | tags, commit diffs, what shipped and when |
 
-PAT permissions you need (GitHub → Settings → Developer settings → Fine-grained tokens):
-- **Contents**: read *(+ write only if you use `propose_fix_pr`)*
-- **Pull requests**: read *(+ write only if you use `propose_fix_pr`)*
-- **Actions**: read *(+ write only if you use `rollback_deploy`)*
-
-The `GITHUB_DEPLOY_WORKFLOW` must define `workflow_dispatch` with an `env` input. Minimal skeleton:
-
-```yaml
-# .github/workflows/deploy.yml
-name: Deploy
-on:
-  workflow_dispatch:
-    inputs:
-      env:
-        description: 'Environment'
-        required: true
-        type: string
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: ./scripts/deploy.sh "${{ inputs.env }}"
-```
-
-### Optional
-
-| Var | Default | Purpose |
-|---|---|---|
-| `GRAFANA_CA_CERT_PATH` | — | Pin Grafana's TLS cert to a file (recommended for self-signed) |
-| `ENV_LABEL_KEY` | `env` | Label key in Mimir/Loki that identifies environment |
-| `TEAM_LABEL_KEY` | `team` | Label key for team |
-| `TEAM_LABEL_VALUE` | (empty) | Restrict queries to one team — leave empty to skip team filtering |
-| `DEPLOY_TAG_PROD_REGEX` | `^v\d+\.\d+\.\d+$` | Regex that matches prod tags |
-| `DEPLOY_TAG_NONPROD_SUFFIX_DEV` | `-dev` | Dev tag suffix |
-| `DEPLOY_TAG_NONPROD_SUFFIX_STAGING` | `-stag` | Staging tag suffix |
-| `MCP_HOST` | `127.0.0.1` | Bind address (use `0.0.0.0` only with `MCP_BEARER_TOKEN`) |
-| `MCP_PORT` | `8765` | Port |
-| `MCP_BEARER_TOKEN` | (empty) | Shared secret. If set, every request must include `Authorization: Bearer <token>`. Generate with `openssl rand -hex 32`. |
-| `PROPOSAL_TTL_SECONDS` | `600` | How long a `propose_*` result stays valid before the matching `confirm_*` must be called. 10 min default lets a human read + decide in chat. |
-| `AUDIT_LOG_PATH` | (empty) | Append-only JSONL audit log. Empty = stderr only. |
-
----
-
-## Architecture
-
-```
-        ┌──────────┐   ┌──────────┐   ┌─────────────┐
-        │  Claude  │   │  Claude  │   │  Autonomous │
-        │   Code   │   │ Desktop  │   │  agent      │
-        │  (CLI)   │   │  (GUI)   │   │ (Hermes, …) │
-        └────┬─────┘   └────┬─────┘   └──────┬──────┘
-             └─────────────┬┴────────────────┘
-                           ▼
-              ┌─────────────────────────┐
-              │  lgtm-oncall-mcp        │
-              │  FastMCP HTTP · 16 tools │
-              │  (senses · vision · hands)│
-              └────┬──────────┬─────────┘
-                   │          │
-              ┌────▼─────┐  ┌─▼──────────┐
-              │ Grafana  │  │ Bitbucket  │
-              │  + Mimir │  │   Cloud    │
-              │  + Loki  │  │  OR GitHub │
-              └──────────┘  └────────────┘
-```
-
-The server is stateless. Run it close to your LGTM stack (in the same VPC if Mimir/Loki are private). Agents can be anywhere as long as they reach the server.
-
----
-
-## Guardrails
-
-Destructive tools (`rollback_deploy`, `propose_fix_pr`) are **not directly callable**. They're split into `propose_*` / `confirm_*` pairs and gated server-side:
-
-```
-Agent decides to rollback
-       ↓
-   propose_rollback(env, tag)
-       ↓
-   Server: validate tag matches env convention
-       ↓
-   Server: store proposal in-memory with TTL
-       ↓
-   Server: audit "proposal_created"
-       ↓
-   Returns {proposal_id, expires_in_seconds, ...}
-       ↓
-   (Agent surfaces it to user / waits for explicit "yes")
-       ↓
-   confirm_rollback(proposal_id)
-       ↓
-   Server: look up proposal — must exist, not be expired, not be a different tool
-       ↓
-   Server: pop proposal (one-shot)
-       ↓
-   Server: audit "proposal_consumed"
-       ↓
-   Server: call VCS → audit "action_executed" or "action_failed"
-       ↓
-   Returns pipeline result
-```
-
-**What this prevents:**
-- Agent loose-interpreting a "yes" or "ok" as approval — confirm requires a fresh `proposal_id` from a separate prior call.
-- Replay: each `proposal_id` is one-shot. Confirmed once, gone.
-- Cross-tool confusion: a `propose_rollback` id won't execute `confirm_pr_change`.
-- Stale approvals: ids expire (default 600s = 10 min; tune via `PROPOSAL_TTL_SECONDS`). The `propose_*` response includes both `expires_in_seconds` and `expires_at_utc` so the agent can surface the deadline to a human.
-
-**What this does NOT prevent (yet):**
-- Allowed-target lists (rollback to ANY existing tag works — no curated list). Roadmap.
-- Cool-down between destructive actions. Roadmap.
-- Server restarts invalidate open proposals (this is intentional — safer default).
-
-### Audit log
-
-Every destructive action emits structured JSON events:
-
-```
-proposal_created    propose_* succeeded
-proposal_consumed   confirm_* consumed a proposal (about to execute)
-action_executed     execution succeeded — result included
-action_failed       execution raised — error included
-proposal_rejected   confirm_* called with bad/expired/wrong-tool id
-```
-
-Two sinks (both fire on each event):
-- **stderr** — always. systemd journal / container runtime captures it.
-- **file** — optional. Set `AUDIT_LOG_PATH=/var/log/lgtm-oncall-mcp/audit.jsonl` and it's appended line-by-line.
-
-The file format is JSONL — ship it to Loki via promtail, S3 via fluent-bit, anywhere. Example:
-
-```json
-{"ts":"2026-06-06T03:21:14Z","event":"proposal_created","tool":"rollback_deploy","proposal_id":"abc","args":{"env":"staging","target_tag":"v1-stag"},"expires_in_s":60}
-{"ts":"2026-06-06T03:21:33Z","event":"proposal_consumed","tool":"rollback_deploy","proposal_id":"abc","args":{"env":"staging","target_tag":"v1-stag"}}
-{"ts":"2026-06-06T03:21:34Z","event":"action_executed","tool":"rollback_deploy","proposal_id":"abc","result":{"pipeline_id":"...","state":"PENDING"}}
-```
-
----
-
-## Security notes
-
-- **Bearer-token auth** (`MCP_BEARER_TOKEN`) is supported but optional. If your transport isn't loopback or SSH-tunneled, **set the token**.
-- **Cert pinning** (`GRAFANA_CA_CERT_PATH`) is supported for self-signed Grafana setups. Prefer pinning over `verify=False`.
-- **No secrets are written to disk** by the server. Tokens live only in environment variables.
-- **Destructive actions go through the propose/confirm pattern** (see [Guardrails](#guardrails)). Even with that, an agent on the LLM side should still require explicit user confirmation before calling `confirm_*`.
-
----
+| Target | Writes |
+|---|---|
+| GitHub | open a pull request against the config repository, behind the approval gate |
+| Argo Rollouts | abort or promote a rollout, behind the approval gate |
 
 ## Development
 
 ```bash
-git clone https://github.com/SaputraUta/lgtm-oncall-mcp.git
-cd lgtm-oncall-mcp
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-python -m playwright install chromium
-
-pytest      # tests
-ruff check  # lint
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+.venv/bin/pytest -q
+.venv/bin/ruff check .
 ```
 
-### Try it without an AWS account
+Tests use `respx` to record HTTP, so the suite needs no cluster.
 
-A local docker-compose brings up Grafana + Mimir + Loki + a node-exporter so the sense tools have real data:
+## Licence
 
-```bash
-docker compose up -d
-open http://localhost:3000        # Grafana — anonymous Admin
-
-# In another shell:
-set -a; source .env.docker; set +a
-python -m lgtm_oncall_mcp
-# → MCP server listening, ready for any client
-```
-
-See `examples/docker/` for the Mimir + Grafana config files used by the stack.
-
----
-
-## Why this exists
-
-If you give a generic agent shell + SSH, it's effective. It's also terrifying to imagine running unattended at 3am.
-
-The LGTM stack already has all the data an on-call human would look at. The deploy pipeline already has the actions a human would take. What's missing is a **typed, auditable surface** the agent can use without inheriting full root.
-
-That's this server: senses + vision + hands as concrete tools, defined once, consumed by any MCP client.
-
----
-
-## License
-
-MIT — see [LICENSE](./LICENSE).
+MIT. See [LICENSE](./LICENSE).

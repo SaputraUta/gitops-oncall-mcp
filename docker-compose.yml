@@ -6,7 +6,7 @@
 #   open http://localhost:3000        (Grafana — anonymous viewer)
 #   # then in another shell:
 #   set -a; source .env.docker; set +a
-#   python -m lgtm_oncall_mcp
+#   python -m gitops_oncall_mcp
 
 services:
 

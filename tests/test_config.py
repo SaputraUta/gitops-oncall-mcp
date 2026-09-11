@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-from lgtm_oncall_mcp.config import (
+from gitops_oncall_mcp.config import (
     Config,
     DeployTagConfig,
     LabelConfig,
@@ -74,17 +74,14 @@ def test_config_from_env(monkeypatch):
     monkeypatch.setenv("GRAFANA_TOKEN", "tok")
     monkeypatch.setenv("MIMIR_DS_UID", "m-uid")
     monkeypatch.setenv("LOKI_DS_UID", "l-uid")
-    monkeypatch.setenv("VCS_PROVIDER", "bitbucket")
-    monkeypatch.setenv("BITBUCKET_EMAIL", "a@b.com")
-    monkeypatch.setenv("BITBUCKET_API_TOKEN", "x")
-    monkeypatch.setenv("BITBUCKET_WORKSPACE", "ws")
-    monkeypatch.setenv("BITBUCKET_REPO_SLUG", "repo")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
+    monkeypatch.setenv("GITHUB_OWNER", "octocat")
+    monkeypatch.setenv("GITHUB_REPO", "repo")
 
     cfg = Config.from_env()
     assert cfg.grafana.url == "https://g.example.com"
-    assert cfg.vcs.provider == "bitbucket"
-    assert cfg.vcs.bitbucket is not None
-    assert cfg.vcs.github is None
+    assert cfg.vcs.github.owner == "octocat"
+    assert cfg.vcs.github.api_base == "https://api.github.com"
 
 
 def test_config_missing_required(monkeypatch):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from lgtm_oncall_mcp.audit import AuditLog
+from gitops_oncall_mcp.audit import AuditLog
 
 
 def test_emit_writes_to_stderr(capsys):

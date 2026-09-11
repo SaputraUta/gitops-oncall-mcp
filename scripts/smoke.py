@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end smoke test against a running lgtm-oncall-mcp server.
+"""End-to-end smoke test against a running gitops-oncall-mcp server.
 
 Exercises every tool category. SAFE to run against production infra — never
 calls `confirm_*`, so no destructive action fires. The `propose_*` step is

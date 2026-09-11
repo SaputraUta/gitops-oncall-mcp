@@ -8,7 +8,7 @@ import httpx
 import respx
 from fastmcp import FastMCP
 
-from lgtm_oncall_mcp.tools import senses
+from gitops_oncall_mcp.tools import senses
 
 if TYPE_CHECKING:
     pass
@@ -26,7 +26,7 @@ class _StubVCS:
     """Minimal VCS adapter that returns canned values."""
 
     def list_tags(self, limit: int = 50):
-        from lgtm_oncall_mcp.vcs.base import TagInfo
+        from gitops_oncall_mcp.vcs.base import TagInfo
 
         return [
             TagInfo(tag="v1.0.0-stag", sha="abc123", date="2026-01-01", message="ok"),
@@ -38,7 +38,7 @@ class _StubVCS:
         return f"diff for {sha}"
 
     def get_file_commits(self, path, limit=10):
-        from lgtm_oncall_mcp.vcs.base import Commit
+        from gitops_oncall_mcp.vcs.base import Commit
 
         return [Commit(sha="aaa", date="2026-01-01", message=f"touched {path}")]
 

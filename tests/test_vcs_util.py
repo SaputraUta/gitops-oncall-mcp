@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from lgtm_oncall_mcp.vcs.base import TagInfo
-from lgtm_oncall_mcp.vcs.util import semver_sort_key, sort_tags_newest_first
+from gitops_oncall_mcp.vcs.base import TagInfo
+from gitops_oncall_mcp.vcs.util import semver_sort_key, sort_tags_newest_first
 
 
 def test_semver_key_orders_versions_numerically():
