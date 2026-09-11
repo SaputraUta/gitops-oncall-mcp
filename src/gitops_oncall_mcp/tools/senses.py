@@ -52,56 +52,86 @@ def register(mcp: FastMCP, ctx: SensesCtx) -> None:
         """Health check. Returns 'ok'."""
         return "ok"
 
-    def get_cpu_usage(env: str) -> list[dict]:
-        """Current CPU usage percent per host in the given environment.
+    def get_cpu_usage(env: str, minutes: int = 5) -> list[dict]:
+        """CPU used per pod, against that pod's own limit.
 
         Args:
-            env: Environment name (e.g. 'prod', 'staging', 'dev').
+            env: Environment name.
+            minutes: Averaging window for the rate.
 
-        Returns [{"instance": str, "cpu_percent": float}, ...].
-        Call this when asked about CPU load, high CPU, or which host is hot.
+        Returns [{"pod", "cores", "limit_cores", "percent_of_limit"}, ...].
+        percent_of_limit is None when the pod declares no CPU limit, which means
+        it can burst freely and the raw core count is the only signal.
+        Call this when asked about CPU load, throttling, or which pod is hot.
         """
-        sel = labels.selector(env, 'mode="idle"')
-        q = f"100 - (avg by (instance) (rate(node_cpu_seconds_total{{{sel}}}[5m])) * 100)"
+        sel = labels.selector(env, 'container!=""')
+        used = {
+            s["metric"]["pod"]: float(s["value"][1])
+            for s in _promql(ctx, f"sum by (pod) (rate(container_cpu_usage_seconds_total{{{sel}}}[{minutes}m]))")
+        }
+        lim_sel = labels.selector(env, 'resource="cpu"')
+        limits = {
+            s["metric"]["pod"]: float(s["value"][1])
+            for s in _promql(ctx, f"sum by (pod) (kube_pod_container_resource_limits{{{lim_sel}}})")
+        }
         return [
-            {"instance": s["metric"].get("instance", "?"), "cpu_percent": round(float(s["value"][1]), 2)}
-            for s in _promql(ctx, q)
+            {
+                "pod": pod,
+                "cores": round(cores, 4),
+                "limit_cores": limits.get(pod),
+                "percent_of_limit": round(100 * cores / limits[pod], 1) if limits.get(pod) else None,
+            }
+            for pod, cores in sorted(used.items(), key=lambda kv: -kv[1])
         ]
 
     def get_memory_usage(env: str) -> list[dict]:
-        """Current memory usage percent per host.
+        """Memory used per pod, against that pod's own limit.
 
         Args:
             env: Environment name.
 
-        Returns [{"instance": str, "memory_percent": float}, ...].
-        Call when asked about RAM, memory pressure, or OOM risk.
+        Returns [{"pod", "mib", "limit_mib", "percent_of_limit"}, ...].
+        percent_of_limit approaching 100 predicts an OOMKill. None means the pod
+        declares no memory limit.
+        Call this when asked about RAM, memory pressure, OOM, or restarts.
         """
-        sel = labels.selector(env)
-        q = (
-            f"100 * (1 - node_memory_MemAvailable_bytes{{{sel}}} "
-            f"/ node_memory_MemTotal_bytes{{{sel}}})"
-        )
+        sel = labels.selector(env, 'container!=""')
+        used = {
+            s["metric"]["pod"]: float(s["value"][1])
+            for s in _promql(ctx, f"sum by (pod) (container_memory_working_set_bytes{{{sel}}})")
+        }
+        lim_sel = labels.selector(env, 'resource="memory"')
+        limits = {
+            s["metric"]["pod"]: float(s["value"][1])
+            for s in _promql(ctx, f"sum by (pod) (kube_pod_container_resource_limits{{{lim_sel}}})")
+        }
+        mib = 1024 * 1024
         return [
-            {"instance": s["metric"].get("instance", "?"), "memory_percent": round(float(s["value"][1]), 2)}
-            for s in _promql(ctx, q)
+            {
+                "pod": pod,
+                "mib": round(b / mib, 1),
+                "limit_mib": round(limits[pod] / mib, 1) if limits.get(pod) else None,
+                "percent_of_limit": round(100 * b / limits[pod], 1) if limits.get(pod) else None,
+            }
+            for pod, b in sorted(used.items(), key=lambda kv: -kv[1])
         ]
 
-    def get_disk_usage(env: str) -> list[dict]:
-        """Current root-filesystem disk usage percent per host.
+    def get_disk_usage() -> list[dict]:
+        """Root-filesystem usage per node.
 
-        Args:
-            env: Environment name.
-
-        Returns [{"instance": str, "disk_percent": float}, ...].
-        Call when asked about disk space, full disk, or filesystem usage.
+        Returns [{"node", "disk_percent"}, ...], worst first.
+        Takes no environment: disk belongs to the node, and every environment in
+        this cluster shares the same nodes. A node above ~85% gets tainted with
+        DiskPressure and the kubelet starts evicting pods regardless of namespace.
+        Call this when asked about disk space, full disk, or eviction.
         """
-        sel = labels.selector(env, 'mountpoint="/",fstype!~"tmpfs|overlay"')
+        sel = 'mountpoint="/",fstype!~"tmpfs|overlay"'
         q = f"100 * (1 - node_filesystem_avail_bytes{{{sel}}} / node_filesystem_size_bytes{{{sel}}})"
-        return [
-            {"instance": s["metric"].get("instance", "?"), "disk_percent": round(float(s["value"][1]), 2)}
+        rows = [
+            {"node": s["metric"].get("instance", "?"), "disk_percent": round(float(s["value"][1]), 1)}
             for s in _promql(ctx, q)
         ]
+        return sorted(rows, key=lambda r: -r["disk_percent"])
 
     def get_error_rate(env: str, minutes: int = 30) -> float | None:
         """5xx error rate as a percent of all requests for the env.

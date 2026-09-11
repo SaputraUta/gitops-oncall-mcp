@@ -58,29 +58,34 @@ def _register(cfg):
     return mcp, ctx
 
 
+def _tool(mcp, name):
+    """Reach the plain function behind a registered FastMCP tool."""
+    return asyncio.run(mcp.get_tool(name)).fn
+
+
 @respx.mock
-def test_get_cpu_usage(cfg):
-    respx.get("http://prometheus.test/api/v1/query").respond(
-        json={
-            "data": {
-                "result": [
-                    {"metric": {"instance": "host-1"}, "value": [0, "12.345"]},
-                    {"metric": {"instance": "host-2"}, "value": [0, "5.0"]},
-                ]
-            }
-        }
-    )
-    _, ctx = _register(cfg)
-    # Use the registered function directly via the FunctionTool wrapper
-    # Easier: rebuild the function inline by importing private helper
-    # Workaround: call _promql directly + assert it returns dict shape would
-    # duplicate test. Instead just trust the integration path through a tool
-    # call via the FastMCP test client (skipped for now).
-    # For this skeleton: assert the underlying client call works.
-    r = ctx.prometheus.get("/api/v1/query", params={"query": "up"})
-    assert r.status_code == 200
-    data = r.json()
-    assert len(data["data"]["result"]) == 2
+def test_get_cpu_usage_reports_percent_of_limit(cfg):
+    """Cores are meaningless alone; the tool must divide by the pod's own limit."""
+
+    def respond(request):
+        q = request.url.params["query"]
+        if "container_cpu_usage_seconds_total" in q:
+            return httpx.Response(200, json={"data": {"result": [
+                {"metric": {"pod": "dora-1"}, "value": [0, "0.3"]},
+                {"metric": {"pod": "maps-1"}, "value": [0, "0.08"]},
+            ]}})
+        return httpx.Response(200, json={"data": {"result": [
+            {"metric": {"pod": "dora-1"}, "value": [0, "0.6"]},
+        ]}})
+
+    respx.get("http://prometheus.test/api/v1/query").mock(side_effect=respond)
+    mcp, _ = _register(cfg)
+    rows = _tool(mcp, "get_cpu_usage")("production")
+
+    assert [r["pod"] for r in rows] == ["dora-1", "maps-1"], "busiest pod must sort first"
+    assert rows[0]["percent_of_limit"] == 50.0
+    assert rows[1]["limit_cores"] is None, "a pod with no limit must still appear"
+    assert rows[1]["percent_of_limit"] is None, "unlimited is not zero percent"
 
 
 @respx.mock
