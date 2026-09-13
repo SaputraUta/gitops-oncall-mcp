@@ -27,7 +27,13 @@ def main() -> None:
         return streamable_http_client(
             os.environ["MCP_URL"],
             http_client=httpx2.AsyncClient(
-                headers={"Authorization": f"Bearer {os.environ['MCP_BEARER_TOKEN']}"}
+                headers={"Authorization": f"Bearer {os.environ['MCP_BEARER_TOKEN']}"},
+                # httpx defaults to 5s. A tool that reads three GitHub repos takes
+                # longer than that, and the timeout does not surface as an error:
+                # the transport tears the session down and the agent waits on a
+                # future nobody will ever complete. Fast tools worked, slow ones
+                # hung, and it read as a slow model for most of a day.
+                timeout=httpx2.Timeout(120.0, connect=10.0),
             ),
         )
 
