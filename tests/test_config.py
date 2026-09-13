@@ -10,6 +10,7 @@ from gitops_oncall_mcp.config import (
     Config,
     DeployTagConfig,
     LabelConfig,
+    ServerConfig,
 )
 
 
@@ -90,3 +91,18 @@ def test_config_missing_required(monkeypatch):
     monkeypatch.delenv("PROMETHEUS_URL", raising=False)
     with pytest.raises(RuntimeError, match="PROMETHEUS_URL"):
         Config.from_env()
+
+def test_server_refuses_to_bind_beyond_loopback_without_a_token(monkeypatch):
+    """The tools hold a write-capable token; serving them unauthenticated is worse
+    than not serving them."""
+    monkeypatch.setenv("MCP_HOST", "0.0.0.0")
+    monkeypatch.delenv("MCP_BEARER_TOKEN", raising=False)
+    with pytest.raises(RuntimeError, match="MCP_BEARER_TOKEN"):
+        ServerConfig.from_env()
+
+
+def test_server_allows_loopback_without_a_token(monkeypatch):
+    """Local development stays frictionless: nothing off the machine can reach it."""
+    monkeypatch.setenv("MCP_HOST", "127.0.0.1")
+    monkeypatch.delenv("MCP_BEARER_TOKEN", raising=False)
+    assert ServerConfig.from_env().bearer_token == ""

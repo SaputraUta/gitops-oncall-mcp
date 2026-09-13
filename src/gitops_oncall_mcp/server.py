@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 
+import uvicorn
 from fastmcp import FastMCP
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -88,13 +89,11 @@ def main() -> None:
     cfg = Config.from_env()
     mcp = build_server()
 
-    # Apply bearer-token middleware if configured
+    app = mcp.http_app()
     if cfg.server.bearer_token:
-        # FastMCP exposes its Starlette app via http_app() in 3.x
-        app = mcp.http_app()
         app.add_middleware(BearerTokenAuth, expected=cfg.server.bearer_token)
 
-    mcp.run(transport="http", host=cfg.server.host, port=cfg.server.port)
+    uvicorn.run(app, host=cfg.server.host, port=cfg.server.port)
 
 
 if __name__ == "__main__":

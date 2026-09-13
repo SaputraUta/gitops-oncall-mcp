@@ -161,15 +161,21 @@ class VCSConfig:
 class ServerConfig:
     host: str
     port: int
-    bearer_token: str  # empty → no auth
+    bearer_token: str  # empty → no auth, and only allowed on loopback
+
+    _LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
 
     @classmethod
     def from_env(cls) -> ServerConfig:
-        return cls(
-            host=_optional("MCP_HOST", "127.0.0.1"),
-            port=int(_optional("MCP_PORT", "8765")),
-            bearer_token=_optional("MCP_BEARER_TOKEN"),
-        )
+        host = _optional("MCP_HOST", "127.0.0.1")
+        token = _optional("MCP_BEARER_TOKEN")
+        if host not in cls._LOOPBACK and not token:
+            raise RuntimeError(
+                f"MCP_HOST is {host!r}, so anything on the network can reach the "
+                "tools, but MCP_BEARER_TOKEN is unset. Refusing to start rather "
+                "than serving a write-capable GitHub token unauthenticated."
+            )
+        return cls(host=host, port=int(_optional("MCP_PORT", "8765")), bearer_token=token)
 
 
 @dataclass(frozen=True)
