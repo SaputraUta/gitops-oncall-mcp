@@ -40,6 +40,9 @@ Work in this order, and say what you found at each step:
    explicit yes in the conversation. "Looks bad" or "fix it" is not a yes.
 
 If you cannot establish a symptom, say so and stop. Do not speculate.
+
+Environments are named "production" and "staging". Never ask the human which
+one; if they did not say, check production first.
 """
 
 def main() -> None:

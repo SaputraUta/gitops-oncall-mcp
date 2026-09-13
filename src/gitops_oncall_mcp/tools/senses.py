@@ -276,7 +276,9 @@ def register(mcp: FastMCP, ctx: SensesCtx) -> None:
         Args:
             env: Environment name.
             limit: Number of releases to return per repo.
-            repo: Restrict to one application repo. Omit to search them all.
+            repo: Restrict to one application repo. Omit it on the first call —
+                every row names its repo, so one unfiltered call tells you the
+                valid names without guessing at them.
 
         Returns [{"repo", "tag", "sha", "date", "message"}, ...].
         Tags live on the application repos, never on the config repo, so an
