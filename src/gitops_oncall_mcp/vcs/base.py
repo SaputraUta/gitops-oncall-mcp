@@ -43,6 +43,15 @@ class VCSAdapter(Protocol):
     for the duration of the server process.
     """
 
+    def list_tag_names(self) -> list[str]:
+        """Every tag name, newest first. One request, no commit lookups."""
+        ...
+
+    def describe_tags(self, names: list[str]) -> list[TagInfo]:
+        """Date and message for the named tags. One request per tag, so pass
+        only the tags that survived filtering."""
+        ...
+
     def list_tags(self, limit: int = 50) -> list[TagInfo]:
         """Most recent tags, newest first."""
         ...

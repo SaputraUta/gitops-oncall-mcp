@@ -25,47 +25,40 @@ class GitHubAdapter:
             timeout=20.0,
         )
 
-    def list_tags(self, limit: int = 50) -> list[TagInfo]:
-        # GitHub /tags returns name + commit sha but not date/message. We
-        # sort by semver name first, then enrich the top `limit` with commit
-        # details — this avoids spending API calls on tags we'll drop.
-        r = self._client.get(
-            f"/repos/{self._owner_repo}/tags",
-            params={"per_page": 100},
-        )
+    def _tags_page(self) -> list[TagInfo]:
+        r = self._client.get(f"/repos/{self._owner_repo}/tags", params={"per_page": 100})
         r.raise_for_status()
-        raw = r.json()
-        # Build minimal TagInfo (no date/message yet) just so the sort key works
-        minimal = [TagInfo(tag=t["name"], sha=t["commit"]["sha"][:12], date="", message="") for t in raw]
-        top = sort_tags_newest_first(minimal)[:limit]
-        # Now enrich each kept tag with commit details
+        return [
+            TagInfo(tag=t["name"], sha=t["commit"]["sha"][:12], date="", message="")
+            for t in r.json()
+        ]
+
+    def list_tag_names(self) -> list[str]:
+        return [t.tag for t in sort_tags_newest_first(self._tags_page())]
+
+    def describe_tags(self, names: list[str]) -> list[TagInfo]:
+        # One request per tag, so the caller filters first. Asking GitHub about
+        # fifty tags to show five is the difference between one second and one
+        # minute, multiplied by every repository.
+        by_name = {t.tag: t for t in self._tags_page()}
         out: list[TagInfo] = []
-        for t in top:
-            cr = self._client.get(f"/repos/{self._owner_repo}/commits/{t.sha}")
-            cr.raise_for_status()
-            cj = cr.json()
+        for name in names:
+            t = by_name.get(name)
+            if t is None:
+                continue
+            cj = self._client.get(f"/repos/{self._owner_repo}/commits/{t.sha}").json()
             out.append(
                 TagInfo(
                     tag=t.tag,
                     sha=t.sha,
                     date=cj.get("commit", {}).get("committer", {}).get("date", ""),
-                    message=(cj.get("commit", {}).get("message") or "")
-                    .strip()
-                    .split("\n")[0],
+                    message=(cj.get("commit", {}).get("message") or "").strip().split("\n")[0],
                 )
             )
         return out
 
-    def get_commit_diff(self, sha: str, max_chars: int = 50_000) -> str:
-        r = self._client.get(
-            f"/repos/{self._owner_repo}/commits/{sha}",
-            headers={"Accept": "application/vnd.github.diff"},
-        )
-        r.raise_for_status()
-        text = r.text
-        if len(text) <= max_chars:
-            return text
-        return text[:max_chars] + f"\n... [truncated, full diff is {len(text)} chars]"
+    def list_tags(self, limit: int = 50) -> list[TagInfo]:
+        return self.describe_tags(self.list_tag_names()[:limit])
 
     def get_file_content(self, path: str, ref: str = "main") -> str:
         r = self._client.get(

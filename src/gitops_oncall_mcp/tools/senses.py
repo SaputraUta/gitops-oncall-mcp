@@ -290,16 +290,15 @@ def register(mcp: FastMCP, ctx: SensesCtx) -> None:
         names = [repo] if repo else sorted(ctx.app_vcs)
         out: list[dict] = []
         for name in names:
-            kept = 0
-            for t in _repo(ctx, name).list_tags(limit=50):
-                if not rules.matches(env, t.tag):
-                    continue
-                out.append(
-                    {"repo": name, "tag": t.tag, "sha": t.sha, "date": t.date, "message": t.message}
-                )
-                kept += 1
-                if kept >= limit:
-                    break
+            adapter = _repo(ctx, name)
+            # Filter on tag names first. Names are one cheap request per repo;
+            # dates and messages cost a request each, so only the tags that
+            # survive the filter and the limit are ever described.
+            wanted = [t for t in adapter.list_tag_names() if rules.matches(env, t)][:limit]
+            out += [
+                {"repo": name, "tag": t.tag, "sha": t.sha, "date": t.date, "message": t.message}
+                for t in adapter.describe_tags(wanted)
+            ]
         return sorted(out, key=lambda r: r["date"], reverse=True)
 
     def get_commit_diff(sha: str, repo: str | None = None, max_chars: int = 50_000) -> str:

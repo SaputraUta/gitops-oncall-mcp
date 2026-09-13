@@ -207,13 +207,21 @@ def test_get_recent_deploys_merges_repos_by_date(cfg):
     """Tags live per repo; the tool must merge them into one timeline."""
 
     class _Repo:
-        def __init__(self, tags):
-            self._tags = tags
+        """Counts describe calls, because the cost of this tool is one request
+        per described tag and the whole point is to describe as few as possible."""
 
-        def list_tags(self, limit=50):
+        def __init__(self, tags):
+            self._tags = dict(tags)
+            self.described = 0
+
+        def list_tag_names(self):
+            return list(self._tags)
+
+        def describe_tags(self, names):
             from gitops_oncall_mcp.vcs.base import TagInfo
 
-            return [TagInfo(tag=t, sha="s", date=d, message="m") for t, d in self._tags]
+            self.described += len(names)
+            return [TagInfo(tag=n, sha="s", date=self._tags[n], message="m") for n in names]
 
     prometheus, loki, alerts = _make_clients()
     mcp = FastMCP("test")
@@ -231,8 +239,10 @@ def test_get_recent_deploys_merges_repos_by_date(cfg):
     senses.register(mcp, ctx)
     rows = _tool(mcp, "get_recent_deploys")("production")
 
+
     assert [(r["repo"], r["tag"]) for r in rows] == [("maps", "v1.0.11"), ("dora", "v1.0.4")]
     assert all("-dev" not in r["tag"] for r in rows), "dev tags are not production releases"
+    assert ctx.app_vcs["dora"].described == 1, "the filtered-out dev tag must never be described"
 
     only = _tool(mcp, "get_recent_deploys")("production", repo="dora")
     assert [r["repo"] for r in only] == ["dora"]
