@@ -160,7 +160,7 @@ def register(mcp: FastMCP, ctx: K8sCtx) -> None:
         return out
 
     @mcp.tool
-    def get_analysis_runs(rollout: str | None = None, limit: int = 10) -> list[dict]:
+    def get_analysis_runs(rollout: str = "", limit: int = 10) -> list[dict]:
         """Verdicts from Argo Rollouts analysis, newest first.
 
         Args:
@@ -209,7 +209,7 @@ def register(mcp: FastMCP, ctx: K8sCtx) -> None:
         return runs[:limit]
 
     @mcp.tool
-    def get_argocd_apps(name: str | None = None) -> list[dict]:
+    def get_argocd_apps(name: str = "") -> list[dict]:
         """Argo CD sync and health for the applications it manages.
 
         Args:

@@ -26,9 +26,14 @@ class SensesCtx:
     app_vcs: dict[str, VCSAdapter] = field(default_factory=dict)  # repo name → adapter
 
 
-def _repo(ctx: SensesCtx, repo: str | None) -> VCSAdapter:
-    """Adapter for `repo`, or the config repo when no name is given."""
-    if repo is None:
+def _repo(ctx: SensesCtx, repo: str) -> VCSAdapter:
+    """Adapter for `repo`, or the config repo when the name is empty.
+
+    Empty string rather than None on purpose. A `str | None` parameter becomes
+    `anyOf: [string, null]` in the tool schema, and that shape hangs the agent's
+    tool call outright - no error, no timeout, the request is simply never sent.
+    """
+    if not repo:
         return ctx.vcs
     if repo not in ctx.app_vcs:
         known = ", ".join(sorted(ctx.app_vcs)) or "none configured"
@@ -270,13 +275,13 @@ def register(mcp: FastMCP, ctx: SensesCtx) -> None:
                 out.append({"time": tsval[0], "pod": pod, "line": tsval[1]})
         return out[:limit]
 
-    def get_recent_deploys(env: str, limit: int = 5, repo: str | None = None) -> list[dict]:
+    def get_recent_deploys(env: str, limit: int = 5, repo: str = "") -> list[dict]:
         """Releases of the given environment, newest first, across every app repo.
 
         Args:
             env: Environment name.
             limit: Number of releases to return per repo.
-            repo: Restrict to one application repo. Omit it on the first call —
+            repo: Restrict to one application repo, or "" for all. Omit it on the
                 every row names its repo, so one unfiltered call tells you the
                 valid names without guessing at them.
 
@@ -301,7 +306,7 @@ def register(mcp: FastMCP, ctx: SensesCtx) -> None:
             ]
         return sorted(out, key=lambda r: r["date"], reverse=True)
 
-    def get_commit_diff(sha: str, repo: str | None = None, max_chars: int = 50_000) -> str:
+    def get_commit_diff(sha: str, repo: str = "", max_chars: int = 50_000) -> str:
         """Unified diff of a single commit.
 
         Args:
@@ -314,7 +319,7 @@ def register(mcp: FastMCP, ctx: SensesCtx) -> None:
         """
         return _repo(ctx, repo).get_commit_diff(sha, max_chars=max_chars)
 
-    def get_file_commits(path: str, limit: int = 10, repo: str | None = None) -> list[dict]:
+    def get_file_commits(path: str, limit: int = 10, repo: str = "") -> list[dict]:
         """Recent commits that touched a specific file.
 
         Args:
