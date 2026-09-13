@@ -8,8 +8,6 @@ is a process rather than a series of one-shot runs.
 from __future__ import annotations
 
 import os
-import queue
-import threading
 import traceback
 
 import httpx2
@@ -20,17 +18,6 @@ from strands.tools.mcp import MCPClient
 
 from agent.oncall import PLAYBOOK
 from agent.telegram import Telegram
-
-_turns: queue.Queue[str] = queue.Queue()
-
-
-def _poll_telegram(tg: Telegram) -> None:
-    while True:
-        try:
-            for text in tg.poll():
-                _turns.put(text)
-        except Exception:
-            traceback.print_exc()
 
 
 def main() -> None:
@@ -49,25 +36,29 @@ def main() -> None:
         model_id=f"litellm_proxy/{os.environ.get('LLM_MODEL', 'claude-sonnet')}",
     )
 
-    threading.Thread(target=_poll_telegram, args=(tg,), daemon=True).start()
-
+    # Single threaded on purpose. An earlier version polled Telegram on a
+    # background thread and fed turns through a queue; the agent then hung
+    # before issuing its first MCP request every time, while the identical code
+    # as a plain script worked. Polling long-polls for 25s and the agent runs
+    # between polls, so nothing is lost by doing both on one thread - and the
+    # design already forbids two turns at once.
     with MCPClient(transport) as mcp:
         tools = mcp.list_tools_sync()
         print(f"[{len(tools)} tools from the MCP server]", flush=True)
         agent = Agent(model=model, tools=tools, system_prompt=PLAYBOOK)
-        tg.send(f"On-call agent is up with {len(tools)} tools.")
 
         while True:
-            text = _turns.get()
-            print(f"[turn] {text}", flush=True)
-            # A turn takes tens of seconds. Without this the chat looks dead,
-            # and the human sends the question again.
-            tg.send("…on it")
             try:
-                tg.send(str(agent(text)))
-            except Exception as e:
+                for text in tg.poll():
+                    print(f"[turn] {text}", flush=True)
+                    tg.send("…on it")
+                    try:
+                        tg.send(str(agent(text)))
+                    except Exception as e:
+                        traceback.print_exc()
+                        tg.send(f"The agent failed on that turn: {type(e).__name__}: {e}")
+            except Exception:
                 traceback.print_exc()
-                tg.send(f"The agent failed on that turn: {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":
