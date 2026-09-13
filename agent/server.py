@@ -60,6 +60,9 @@ def main() -> None:
         while True:
             text = _turns.get()
             print(f"[turn] {text}", flush=True)
+            # A turn takes tens of seconds. Without this the chat looks dead,
+            # and the human sends the question again.
+            tg.send("…on it")
             try:
                 tg.send(str(agent(text)))
             except Exception as e:
