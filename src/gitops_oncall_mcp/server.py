@@ -6,8 +6,6 @@ import dataclasses
 
 import uvicorn
 from fastmcp import FastMCP
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .approval import ProposalStore
@@ -46,15 +44,33 @@ def _build_app_vcs(cfg: Config) -> dict[str, VCSAdapter]:
     }
 
 
-class BearerTokenAuth(BaseHTTPMiddleware):
-    def __init__(self, app, expected: str):
-        super().__init__(app)
-        self._expected = f"Bearer {expected}"
+class BearerTokenAuth:
+    """Reject requests without the shared secret, as pure ASGI middleware.
 
-    async def dispatch(self, request: Request, call_next):
-        if request.headers.get("authorization") != self._expected:
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
-        return await call_next(request)
+    Deliberately not a BaseHTTPMiddleware. That class buffers the response
+    through call_next, which breaks the long-lived streaming responses MCP
+    rides on: the stream never completes and starlette raises "No response
+    returned" while the client waits forever. A plain ASGI wrapper inspects the
+    request headers and then hands the untouched send/receive pair through, so
+    streaming behaves exactly as if nothing were wrapping it.
+
+    Worth knowing: curl does not stream, so a curl probe passes against the
+    broken version. Only a real MCP client exercises this path.
+    """
+
+    def __init__(self, app, expected: str):
+        self._app = app
+        self._expected = f"Bearer {expected}".encode()
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+        supplied = dict(scope.get("headers") or {}).get(b"authorization")
+        if supplied != self._expected:
+            await JSONResponse({"error": "unauthorized"}, status_code=401)(scope, receive, send)
+            return
+        await self._app(scope, receive, send)
 
 
 def build_server() -> FastMCP:
