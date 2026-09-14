@@ -2,9 +2,6 @@ FROM python:3.12-slim AS build
 WORKDIR /src
 RUN pip install --no-cache-dir --prefix=/install "strands-agents[litellm]"
 
-# Python 3.12 on purpose, and worth not "upgrading": strands 1.55.1 deadlocks on
-# 3.14 the moment MCP tools are attached. The agent hangs before its first tool
-# call with no error at all, which looks exactly like a slow model.
 FROM python:3.12-slim
 RUN useradd --create-home --uid 10001 agent
 COPY --from=build /install /usr/local

@@ -53,17 +53,13 @@ one; if they did not say, check production first.
 
 def main() -> None:
     def transport():
-        # mcp 2.x takes no headers argument; the bearer token rides on the
-        # HTTP client the transport is handed.
+        # mcp 2.x has no headers argument; the token rides on the HTTP client.
         return streamable_http_client(
             os.environ["MCP_URL"],
             http_client=httpx2.AsyncClient(
                 headers={"Authorization": f"Bearer {os.environ['MCP_BEARER_TOKEN']}"},
-                # httpx defaults to 5s. A tool that reads three GitHub repos takes
-                # longer than that, and the timeout does not surface as an error:
-                # the transport tears the session down and the agent waits on a
-                # future nobody will ever complete. Fast tools worked, slow ones
-                # hung, and it read as a slow model for most of a day.
+                # httpx defaults to 5s, which silently kills any tool slower than
+                # that: the session is torn down and the agent waits forever.
                 timeout=httpx2.Timeout(120.0, connect=10.0),
             ),
         )
@@ -77,8 +73,6 @@ def main() -> None:
         model_id=f"litellm_proxy/{os.environ.get('LLM_MODEL', 'claude-sonnet')}",
     )
 
-    # The tools only exist while the session is open, so the agent is built and
-    # used inside the context manager rather than handed out for later.
     with mcp:
         tools = mcp.list_tools_sync()
         print(f"[{len(tools)} tools from the MCP server]\n")

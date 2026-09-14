@@ -48,9 +48,7 @@ class AuditLog:
         record = {"ts": _iso_now(), "event": event, **fields}
         line = json.dumps(record, default=str)
         with self._lock:
-            # stderr — always
             print(line, file=sys.stderr, flush=True)
-            # file — best-effort
             if self._file is not None:
                 try:
                     self._file.write(line + "\n")

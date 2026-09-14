@@ -29,9 +29,8 @@ class SensesCtx:
 def _repo(ctx: SensesCtx, repo: str) -> VCSAdapter:
     """Adapter for `repo`, or the config repo when the name is empty.
 
-    Empty string rather than None on purpose. A `str | None` parameter becomes
-    `anyOf: [string, null]` in the tool schema, and that shape hangs the agent's
-    tool call outright - no error, no timeout, the request is simply never sent.
+    Empty string rather than None so the tool schema stays a plain string
+    instead of `anyOf: [string, null]`, which not every model client handles.
     """
     if not repo:
         return ctx.vcs
@@ -164,9 +163,8 @@ def register(mcp: FastMCP, ctx: SensesCtx) -> None:
         """
         sel_all = labels.selector(env)
         sel_5xx = labels.selector(env, 'status=~"5.."')
-        # `or vector(0)` keeps a genuine zero from collapsing into an empty
-        # vector: with no 5xx series at all, the division would yield no result
-        # and read as "no data" rather than "no errors".
+        # `or vector(0)`: with no 5xx series the division yields nothing, which
+        # would read as "no data" rather than "no errors".
         errors = f"(sum(rate(http_requests_total{{{sel_5xx}}}[{minutes}m])) or vector(0))"
         total = f"sum(rate(http_requests_total{{{sel_all}}}[{minutes}m]))"
         q = f"100 * ({errors}) / ({total})"
@@ -296,9 +294,8 @@ def register(mcp: FastMCP, ctx: SensesCtx) -> None:
         out: list[dict] = []
         for name in names:
             adapter = _repo(ctx, name)
-            # Filter on tag names first. Names are one cheap request per repo;
-            # dates and messages cost a request each, so only the tags that
-            # survive the filter and the limit are ever described.
+            # Filter on names first: names are one request per repo, dates and
+            # messages cost one request each.
             wanted = [t for t in adapter.list_tag_names() if rules.matches(env, t)][:limit]
             out += [
                 {"repo": name, "tag": t.tag, "sha": t.sha, "date": t.date, "message": t.message}
@@ -334,7 +331,6 @@ def register(mcp: FastMCP, ctx: SensesCtx) -> None:
         commits = _repo(ctx, repo).get_file_commits(path, limit=limit)
         return [{"sha": c.sha, "date": c.date, "message": c.message} for c in commits]
 
-    # Register every tool
     for fn in (
         ping,
         get_cpu_usage,

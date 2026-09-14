@@ -182,19 +182,14 @@ class ServerConfig:
 class GuardrailsConfig:
     """Server-side safety gates for destructive tools."""
 
-    # How long a `propose_*` result stays valid before the matching
-    # `confirm_*` must be called. Short window = small attack surface.
     proposal_ttl_seconds: int
 
-    # Optional path for the append-only audit log. Always also emitted to stderr.
     audit_log_path: str | None
 
     @classmethod
     def from_env(cls) -> GuardrailsConfig:
         return cls(
-            # 600s (10 min) default: enough room for a human to read the
-            # proposal in chat, think, then reply. 60s was too tight for
-            # any realistic human-in-loop flow.
+            # 10 minutes: room for a human to read the proposal and reply.
             proposal_ttl_seconds=int(_optional("PROPOSAL_TTL_SECONDS", "600")),
             audit_log_path=_optional("AUDIT_LOG_PATH") or None,
         )

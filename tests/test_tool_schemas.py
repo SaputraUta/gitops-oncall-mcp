@@ -1,12 +1,7 @@
-"""No tool parameter may be nullable.
+"""Tool parameters stay plain types.
 
-A `str | None` parameter renders as `anyOf: [string, null]` in the tool schema,
-and that shape hangs the agent outright: the model announces the call, the
-request is never sent, and there is no error and no timeout to look at. Tools
-without parameters and tools with plain typed parameters were fine, so the
-failure looked like a slow model for hours.
-
-Use `param: str = ""` and treat empty as absent.
+`str | None` renders as `anyOf: [string, null]`, which not every model client
+handles. Use `param: str = ""` and treat empty as absent.
 """
 
 from __future__ import annotations

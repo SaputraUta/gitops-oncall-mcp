@@ -77,7 +77,6 @@ class ProposalStore:
         if p is None:
             raise KeyError(f"proposal {proposal_id!r} not found or already consumed")
         if p.is_expired():
-            # Already swept usually, but belt-and-suspenders
             raise TimeoutError(f"proposal {proposal_id!r} has expired")
         if p.tool != expected_tool:
             # Don't let a propose_rollback id be used to confirm a propose_pr_change

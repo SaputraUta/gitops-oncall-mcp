@@ -47,7 +47,6 @@ class HandsCtx:
     audit: AuditLog
 
 
-# Tool names used for both proposal.tool and audit event scoping
 _T_ROLLBACK = "rollback_deploy"
 _T_PR = "propose_fix_pr"
 
@@ -55,10 +54,6 @@ _T_PR = "propose_fix_pr"
 def register(mcp: FastMCP, ctx: HandsCtx) -> None:
     rules = ctx.cfg.deploy_tags
     ttl = ctx.cfg.guardrails.proposal_ttl_seconds
-
-    # ─────────────────────────────────────────────────────────
-    # rollback_deploy — propose + confirm
-    # ─────────────────────────────────────────────────────────
 
     def propose_rollback(env: str, service: str, target_tag: str) -> dict:
         """Propose rolling one service back to an earlier tag. Returns a
@@ -135,8 +130,7 @@ def register(mcp: FastMCP, ctx: HandsCtx) -> None:
             },
             ttl_seconds=ttl,
         )
-        # The rewritten file is deliberately left out of the audit record: it is
-        # the whole values file, and the one-line move is what a reader needs.
+        # The rewritten file is left out: the one-line move is what a reader needs.
         ctx.audit.emit(
             "proposal_created",
             tool=_T_ROLLBACK,
@@ -190,8 +184,7 @@ def register(mcp: FastMCP, ctx: HandsCtx) -> None:
             args={k: v for k, v in p.payload.items() if k != "new_content"},
         )
         pay = p.payload
-        # The proposal id rides in the branch name so a retry cannot collide
-        # with the branch a previous proposal already created.
+        # The proposal id keeps a retry from colliding with an earlier branch.
         branch = f"rollback/{pay['env']}-{pay['service']}-{pay['target_tag']}-{proposal_id[:8]}"
         title = (
             f"rollback: {pay['service']} {pay['from_tag']} -> {pay['target_tag']} "
@@ -239,10 +232,6 @@ def register(mcp: FastMCP, ctx: HandsCtx) -> None:
         )
         return out
 
-    # ─────────────────────────────────────────────────────────
-    # propose_fix_pr — propose + confirm
-    # ─────────────────────────────────────────────────────────
-
     def propose_pr_change(
         branch_name: str,
         file_path: str,
@@ -285,7 +274,6 @@ def register(mcp: FastMCP, ctx: HandsCtx) -> None:
             "proposal_created",
             tool=_T_PR,
             proposal_id=p.proposal_id,
-            # Don't dump full content into audit — it can be huge. Summarize.
             args={
                 "branch_name": branch_name,
                 "file_path": file_path,

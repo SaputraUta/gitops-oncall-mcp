@@ -37,9 +37,7 @@ class GitHubAdapter:
         return [t.tag for t in sort_tags_newest_first(self._tags_page())]
 
     def describe_tags(self, names: list[str]) -> list[TagInfo]:
-        # One request per tag, so the caller filters first. Asking GitHub about
-        # fifty tags to show five is the difference between one second and one
-        # minute, multiplied by every repository.
+        # One request per tag, so the caller filters first.
         by_name = {t.tag: t for t in self._tags_page()}
         out: list[TagInfo] = []
         for name in names:
@@ -110,7 +108,6 @@ class GitHubAdapter:
         )
         if r.status_code not in (201, 204):
             r.raise_for_status()
-        # workflow_dispatch returns 204 with no body; build a best-effort result.
         return PipelineResult(
             pipeline_id="",
             build_number=None,
@@ -127,19 +124,16 @@ class GitHubAdapter:
         body: str,
         base_branch: str = "main",
     ) -> PRResult:
-        # 1. Resolve base SHA
         r = self._client.get(f"/repos/{self._owner_repo}/git/ref/heads/{base_branch}")
         r.raise_for_status()
         base_sha = r.json()["object"]["sha"]
 
-        # 2. Create branch
         r = self._client.post(
             f"/repos/{self._owner_repo}/git/refs",
             json={"ref": f"refs/heads/{branch_name}", "sha": base_sha},
         )
         r.raise_for_status()
 
-        # 3. Get current file SHA (if it exists) for the PUT to update
         existing_sha: str | None = None
         r = self._client.get(
             f"/repos/{self._owner_repo}/contents/{file_path}",
@@ -150,7 +144,6 @@ class GitHubAdapter:
         elif r.status_code != 404:
             r.raise_for_status()
 
-        # 4. Create/update the file on the branch
         payload: dict = {
             "message": title,
             "content": base64.b64encode(new_content.encode()).decode(),
@@ -164,7 +157,6 @@ class GitHubAdapter:
         )
         r.raise_for_status()
 
-        # 5. Open PR
         r = self._client.post(
             f"/repos/{self._owner_repo}/pulls",
             json={
