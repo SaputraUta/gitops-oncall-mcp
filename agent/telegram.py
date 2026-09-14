@@ -21,7 +21,10 @@ class Telegram:
         self._c = httpx.Client(base_url=f"https://api.telegram.org/bot{token}", timeout=40)
         self._allowed = allowed_ids
         self._offset: int | None = None
-        self._chat_id: int | None = None
+        # In a private chat the chat id equals the user id, so the bot can reach
+        # the first allowed user before anyone has spoken to it. An alert can
+        # fire on a fresh pod, and it would otherwise have nowhere to report.
+        self._chat_id: int | None = min(allowed_ids) if allowed_ids else None
 
     @classmethod
     def from_env(cls) -> Telegram:
@@ -33,8 +36,7 @@ class Telegram:
         return cls(os.environ["TELEGRAM_BOT_TOKEN"], ids)
 
     def send(self, text: str) -> None:
-        """Send to the last chat that talked to us. Silently does nothing until
-        somebody has, because a bot cannot open a conversation."""
+        """Send to the last chat that talked to us, or to the first allowed user."""
         if self._chat_id is None:
             return
         for i in range(0, len(text), _MAX_CHARS):
