@@ -8,12 +8,14 @@ zero inbound.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Iterator
 
 import httpx
 
 # Telegram rejects anything longer, and a triage summary routinely exceeds it.
 _MAX_CHARS = 4000
+_MARKDOWN = re.compile(r"\*\*|__|`")
 
 
 class Telegram:
@@ -36,9 +38,15 @@ class Telegram:
         return cls(os.environ["TELEGRAM_BOT_TOKEN"], ids)
 
     def send(self, text: str) -> None:
-        """Send to the last chat that talked to us, or to the first allowed user."""
+        """Send to the last chat that talked to us, or to the first allowed user.
+
+        Markdown is stripped rather than rendered. Asking Telegram to parse it
+        means one unbalanced asterisk returns 400 and the message is lost, and
+        the text here is written by a model.
+        """
         if self._chat_id is None:
             return
+        text = _MARKDOWN.sub("", text)
         for i in range(0, len(text), _MAX_CHARS):
             self._c.post("/sendMessage", json={"chat_id": self._chat_id, "text": text[i : i + _MAX_CHARS]})
 

@@ -41,9 +41,9 @@ def main() -> None:
         print(f"[{len(tools)} tools from the MCP server]", flush=True)
         agent = Agent(model=model, tools=tools, system_prompt=PLAYBOOK)
 
-        def run(text: str, label: str) -> None:
+        def run(text: str, label: str, ack: str) -> None:
             print(f"[{label}] {text}", flush=True)
-            tg.send("…on it")
+            tg.send(ack)
             try:
                 tg.send(str(agent(text)))
             except Exception as e:
@@ -53,9 +53,9 @@ def main() -> None:
         while True:
             try:
                 while not webhook.alerts.empty():
-                    run(webhook.alerts.get(), "alert")
+                    run(webhook.alerts.get(), "alert", "An alert fired. Looking into it.")
                 for text in tg.poll():
-                    run(text, "turn")
+                    run(text, "turn", "…on it")
             except Exception:
                 traceback.print_exc()
 
