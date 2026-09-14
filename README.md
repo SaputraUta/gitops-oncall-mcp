@@ -7,7 +7,37 @@ An MCP server that gives an LLM agent a typed, auditable on-call surface over a 
 
 Requires a Kubernetes cluster. The resource tools read cAdvisor and kube-state-metrics per pod, and the delivery tools read Argo CD and Argo Rollouts custom resources, so there is no meaningful way to run this against plain hosts.
 
-Status: work in progress. Forked from [lgtm-oncall-mcp](https://github.com/SaputraUta/lgtm-oncall-mcp), which targets a hosted Grafana LGTM stack. This one targets a cluster you run yourself, and adds the Kubernetes and Argo surface the other project has no reason to carry.
+Runs in-cluster as two pods, driven from Telegram and by Alertmanager. Forked from [lgtm-oncall-mcp](https://github.com/SaputraUta/lgtm-oncall-mcp), which targets a hosted Grafana LGTM stack. This one targets a cluster you run yourself, and adds the Kubernetes and Argo surface the other project has no reason to carry.
+
+## How it fits together
+
+Two pods. The server holds every credential and every tool; the agent holds
+none and reaches them over HTTP with a bearer token.
+
+```
+Prometheus rules (155)                      a human, on Telegram
+      │ severity=critical                          │
+      ▼                                            ▼
+ Alertmanager ──── webhook ────► gitops-oncall-agent ◄── one conversation,
+                                  (Strands + LiteLLM)     so a proposal made
+                                         │                now is still live
+                                         │ MCP over HTTP  when you reply
+                                         ▼
+                                gitops-oncall-mcp ── ServiceAccount: get/list/watch
+                                         │
+              ┌──────────────┬───────────┴───────────┬──────────────┐
+              ▼              ▼                       ▼              ▼
+        Kubernetes      Prometheus                 Loki          GitHub
+        Argo CD                                                    │
+        Argo Rollouts                                              ▼
+                                                        pull request, which a
+                                                        human merges and Argo CD
+                                                        then syncs and canaries
+```
+
+The agent image does not install this package. It has no tool code, no
+Kubernetes client and no GitHub token, so "the agent can only act through MCP"
+is a property of the deployment rather than a rule it is asked to follow.
 
 ## Why an MCP server and not a shell
 
@@ -80,6 +110,33 @@ before anything happens. The file is edited line-by-line rather than through a
 YAML round-trip, which would reformat the whole file and bury a one-line change
 in an unreadable diff.
 
+## The agent
+
+`agent/` holds a reference on-call agent built on [Strands](https://strandsagents.com),
+pointed at any OpenAI-compatible endpoint. It is deliberately given no tools of
+its own — `strands-agents-tools` ships `shell`, `file_write` and `python_repl`,
+which is the terminal this project exists to avoid handing a model.
+
+It is woken two ways:
+
+| Trigger | Path |
+|---|---|
+| A human asks | Telegram long polling, so nothing inbound reaches the cluster |
+| An alert fires | Alertmanager posts to `:8080`, bearer-authenticated, answered `202` |
+
+Both feed the same conversation, which is why the agent is one replica with
+`strategy: Recreate`. Two pollers would each take an arbitrary half of the
+messages, and a proposal made by one would be unknown to the other when the
+human replies.
+
+The playbook it runs from names the three readings that are wrong by default:
+`None` is absent data rather than zero, a Kubernetes event is history rather
+than current state, and an Argo CD Application reads `Synced` when Git got its
+way about the spec, not when the release succeeded.
+
+Approval identity is checked on the numeric Telegram user id, never the
+username — a username can be released and re-registered by somebody else.
+
 ## Configuration
 
 Every setting is an environment variable. Copy `.env.example` to `.env` and fill it in; the file documents each one.
@@ -100,7 +157,18 @@ The observability endpoints are addressed directly rather than through a Grafana
 | `GITHUB_OWNER`, `GITHUB_REPO` | yes | the config repository, where pull requests are opened |
 | `GITHUB_APP_REPOS` | no | application repositories, which is where release tags live |
 | `GITHUB_VALUES_PATH` | no | values file per environment, `{env}` substituted; default `envs/{env}/values.yaml` |
+| `GITHUB_APP_REPOS_TOKEN` | no | separate read-only token for the application repos; a fine-grained PAT applies its permissions to every repo it selects |
 | `MCP_BEARER_TOKEN` | when not loopback | shared secret required on every request |
+
+The agent reads a few more:
+
+| Variable | Purpose |
+|---|---|
+| `MCP_URL` | where the MCP server is, e.g. `http://gitops-oncall-mcp:8765/mcp` |
+| `LLM_BASE`, `LLM_API_KEY`, `LLM_MODEL` | any OpenAI-compatible endpoint |
+| `TELEGRAM_BOT_TOKEN` | from BotFather |
+| `TELEGRAM_ALLOWED_USER_IDS` | comma-separated numeric ids allowed to approve |
+| `WEBHOOK_PORT` | alert listener, default 8080 |
 
 The namespace is configuration rather than a tool argument on purpose: the model
 chooses what to ask about, never what it has access to.
@@ -116,6 +184,32 @@ set -a && . ./.env && set +a
 The server speaks MCP over HTTP on `MCP_PORT`, default 8765. Point an MCP client at `http://127.0.0.1:8765/mcp`.
 
 To develop against a real cluster from a laptop, port-forward Prometheus and Loki and set the URLs to localhost.
+
+### In a cluster
+
+Two images, built from `Dockerfile` and `agent/Dockerfile`. Both run non-root on
+a read-only root filesystem with every Linux capability dropped.
+
+The server needs a ServiceAccount bound to a ClusterRole with `get`, `list` and
+`watch` and nothing else — including on `argoproj.io`, because the built-in
+`view` role does not know about Rollouts or Applications. The agent needs no
+ServiceAccount at all.
+
+Secrets reach the pods from a secret manager rather than Git. Note that this
+does land them as Kubernetes Secrets, which are base64 and not encrypted; if
+your platform can have the process fetch its own credentials at startup, that is
+strictly better.
+
+Pin image tags. `latest` makes two different images share a name, so Argo CD
+reports `Synced` while running something else and rollback stops meaning
+anything.
+
+### Timeouts
+
+Give the MCP client an explicit timeout. Most HTTP clients default to a few
+seconds, a tool that reads several repositories takes longer, and the failure is
+silent: the session is torn down and the agent waits on a result that will never
+arrive. It looks exactly like a slow model.
 
 ## Development
 
