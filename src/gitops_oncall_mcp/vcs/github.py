@@ -60,6 +60,17 @@ class GitHubAdapter:
     def list_tags(self, limit: int = 50) -> list[TagInfo]:
         return self.describe_tags(self.list_tag_names()[:limit])
 
+    def get_commit_diff(self, sha: str, max_chars: int = 50_000) -> str:
+        r = self._client.get(
+            f"/repos/{self._owner_repo}/commits/{sha}",
+            headers={"Accept": "application/vnd.github.diff"},
+        )
+        r.raise_for_status()
+        text = r.text
+        if len(text) <= max_chars:
+            return text
+        return text[:max_chars] + f"\n... [truncated, full diff is {len(text)} chars]"
+
     def get_file_content(self, path: str, ref: str = "main") -> str:
         r = self._client.get(
             f"/repos/{self._owner_repo}/contents/{path}",
